@@ -1,0 +1,214 @@
+---
+title: BaluFood
+description: Resolución completa de la máquina virtual *BaluFood* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **BaluFood**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone una aplicación web en el puerto 5000 que contiene un panel de administración accesible con credenciales por defecto (`admin:admin`). A través del panel, se accede al código fuente de la aplicación, donde se encuentran credenciales hardcodeadas del usuario `SysAdmin`. Con estas credenciales, se obtiene acceso SSH al sistema.
+Una vez dentro, se enumeran archivos del sistema y se encuentran más credenciales en el archivo `.bashrc` del usuario `Balulero`, que permiten el acceso a este usuario. Finalmente, las mismas credenciales otorgan acceso como `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'BaluFood',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '29/04/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip BaluFood.zip
+sudo bash auto_deploy.sh BaluFood.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p BaluFood/{content,exploits,nmap,scripts}
+cd BaluFood
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **5000/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1760685817/Ports_zrrv2q.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,5000 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 5000:
+
+```bash
+gobuster dir -u http://172.17.0.2:5000/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1760940395/Gobuster_xthal3.png)
+
+**Rutas identificadas:**
+- `/index` — Página de inicio del restaurante.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1760940396/Index_kfe8aa.png)
+- `/carta` — Menú / carta de platillos.
+  ![Carta](https://res.cloudinary.com/dewqswzke/image/upload/v1760940394/Carta_vwvhki.png)
+- `/console` — Consola online (arroja `Bad Request`).
+  ![Console](https://res.cloudinary.com/dewqswzke/image/upload/v1760940393/1Console_df0f4m.png)
+- `/login` — Formulario de autenticación.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Autenticación con credenciales por defecto
+
+Se accede a `/login` y se prueban credenciales comunes por defecto, obteniendo acceso con `admin:admin`. Se es redirigido a `/admin`.
+
+![Panel de administración](https://res.cloudinary.com/dewqswzke/image/upload/v1760940393/Admin_ysimzc.png)
+
+### 2.2 Revisión del panel y código fuente
+
+El panel de administración muestra pedidos y opciones de gestión. Al revisar el código de `/admin`, se encuentran credenciales hardcodeadas y variables sensibles en el código fuente:
+
+![Hardcoded password](https://res.cloudinary.com/dewqswzke/image/upload/v1760940393/Backup_kefbeo.png)
+
+### 2.3 Acceso SSH
+
+Con las credenciales obtenidas en el código, se prueba acceso SSH y se obtiene entrada como el usuario `SysAdmin`:
+
+```bash
+ssh SysAdmin@172.17.0.2
+```
+
+![SSH logrado](https://res.cloudinary.com/dewqswzke/image/upload/v1760940399/Ssh_kjluqm.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De SysAdmin → Balulero
+
+Dentro del usuario `SysAdmin`, se realiza una enumeración local básica:
+
+```bash
+id
+uname -a
+ps aux
+ls -la ~
+find / -type f -perm -u=s -ls 2>/dev/null
+```
+
+El listado del home revela archivos del proyecto web. El archivo `app.py` contiene variables interesantes (secretos/credenciales).
+
+![Ls -a](https://res.cloudinary.com/dewqswzke/image/upload/v1760940397/LsSysAdmin_a5c3hh.png)
+
+A partir de la información en `app.py`, se encuentran credenciales que pertenecen al usuario `Balulero`:
+
+![Key](https://res.cloudinary.com/dewqswzke/image/upload/v1760940397/Key_jek6qw.png)
+
+Con estas credenciales se accede a la cuenta `Balulero`:
+
+```bash
+su Balulero
+```
+
+![Balulero login](https://res.cloudinary.com/dewqswzke/image/upload/v1760940394/Balulero_abyk8x.png)
+
+### 3.2 De Balulero → root
+
+Dentro del home de `Balulero`, se observa un `.bashrc` con contenido sospechoso:
+
+![.bashrc](https://res.cloudinary.com/dewqswzke/image/upload/v1760940393/Bashrc_wu8i24.png)
+
+Tras extraer la credencial encontrada en `.bashrc`, se intenta autenticar como `root` con la contraseña hallada:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1760940398/Root_cogkft.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Credenciales por defecto en panel de administración",
+      severity: "Crítica",
+      impact: "Acceso no autorizado al panel administrativo"
+    },
+    {
+      vulnerability: "Credenciales hardcodeadas en código fuente",
+      severity: "Crítica",
+      impact: "Compromiso de cuentas de usuario y acceso SSH"
+    },
+    {
+      vulnerability: "Credenciales en archivos de configuración (.bashrc)",
+      severity: "Alta",
+      impact: "Exposición de contraseñas de usuarios del sistema"
+    },
+    {
+      vulnerability: "Reutilización de contraseñas entre usuarios",
+      severity: "Alta",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de cifrado en información sensible",
+      severity: "Media",
+      impact: "Exposición de credenciales en texto plano"
+    }
+  ]}
+/>

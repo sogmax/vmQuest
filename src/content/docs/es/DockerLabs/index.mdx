@@ -1,0 +1,44 @@
+---
+title: Máquinas de DockerLabs
+description: Esta es la sección de DockerLabs en mi página.
+---
+
+import data from '@/data/dockerlabs.json';
+
+<img src="https://res.cloudinary.com/dewqswzke/image/upload/v1747004672/dockerLabs_uscijr.webp" formats={['avif', 'webp']} alt="Logo de DockerLabs" width={800} height={800}/>
+
+## ¿Qué es DockerLabs?
+
+**DockerLabs** es una plataforma de aprendizaje que ofrece laboratorios interactivos para practicar hacking ético utilizando contenedores Docker. Esta tecnología permite desplegar y eliminar entornos de manera automatizada y eficiente, optimizando recursos.
+
+Cada máquina propone un flujo de aprendizaje:
+- Fase de **reconocimiento** para detectar posibles vectores de intrusión.
+- **Explotación** de vulnerabilidades.
+- **Escalada de privilegios** para acceder como administrador.
+
+Los objetivos clave son descubrir algunas *flags*:
+- `user.txt` para el usuario con privilegios limitados.
+- `root.txt` para el acceso completo.
+
+Las máquinas están clasificadas por nivel de dificultad.
+
+## Máquinas Resueltas
+
+<table>
+  <thead>
+    <tr>
+      <th>Nombre de la Máquina</th>
+      <th>Fecha de Finalización</th>
+      <th>Nivel de Dificultad</th>
+    </tr>
+  </thead>
+  <tbody>
+    {data.map((machine, index) => (
+      <tr key={index}>
+        <td>{machine.name}</td>
+        <td>{machine.completionDate}</td>
+        <td>{machine.difficulty}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>

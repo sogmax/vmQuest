@@ -1,0 +1,224 @@
+---
+title: Grooti
+description: Resolución completa de la máquina virtual *Grooti* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Grooti**, desarrollada por *Grooti* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con directorios accesibles que contienen información sensible, incluyendo credenciales en texto plano y un archivo ZIP protegido con contraseña. Tras extraer un diccionario de contraseñas del ZIP, se realiza un ataque de fuerza bruta contra el servicio SSH, obteniendo acceso al sistema como un usuario no privilegiado.
+Una vez dentro, se identifica una tarea cron ejecutada por `root` que utiliza un script escribible por usuarios comunes, permitiendo la inyección de comandos maliciosos para establecer el bit SUID en `/bin/bash` y obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Grooti',
+    Autor: 'Grooti',
+    Dificultad: 'Fácil',
+    Fecha: '26/07/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Grooti.zip
+sudo bash auto_deploy.sh Grooti.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Grooti/{content,exploits,nmap,scripts}
+cd Grooti
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **3306/tcp** — MySQL
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1761369334/Ports_jadxuf.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,3306 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1761369333/Gobuster_ir4ezn.png)
+
+**Rutas encontradas:**
+- `/index.php`
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1761369334/Index_juoqup.png)
+- `/archives`
+  ![Archives](https://res.cloudinary.com/dewqswzke/image/upload/v1761369337/Archives_lkyu5u.png)
+- `/imagenes`
+  ![Imagenes](https://res.cloudinary.com/dewqswzke/image/upload/v1761369333/Imagenes_m9svv6.png)
+- `/secret`
+  ![Secret](https://res.cloudinary.com/dewqswzke/image/upload/v1761369336/Secret_vifl8j.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Extracción de información sensible
+
+Dentro del archivo `README.txt` se encuentra una **contraseña en texto plano**:
+
+![Readme](https://res.cloudinary.com/dewqswzke/image/upload/v1761369334/Readme_svy97h.png)
+
+Revisando el directorio `/secret`, se descarga un archivo con instrucciones adicionales:
+
+![Instructions](https://res.cloudinary.com/dewqswzke/image/upload/v1761369333/Instrucciones_hxkkdh.png)
+
+Con las credenciales obtenidas, se accede al servicio **MySQL**:
+
+![Databases](https://res.cloudinary.com/dewqswzke/image/upload/v1761369333/Database_id7u44.png)
+
+### 2.2 Fuerza bruta en interfaz web
+
+Entre las rutas descubiertas aparece `/unprivate/secret`, que presenta una interfaz web tipo "terminal":
+
+![Grooti terminal](https://res.cloudinary.com/dewqswzke/image/upload/v1761369336/Unprivate_aqqmca.png)
+
+El sitio permite ingresar valores, generando un archivo `password1.txt`. Se realiza un ataque de fuerza bruta con BurpSuite:
+
+![Burp attack](https://res.cloudinary.com/dewqswzke/image/upload/v1761369337/BurpAttack_e5bd9e.png)
+
+La respuesta con el número `16` destaca por su tamaño anómalo:
+
+![Burp 16](https://res.cloudinary.com/dewqswzke/image/upload/v1761369337/Burp16_upvy3a.png)
+
+Se descarga un archivo **ZIP protegido por contraseña**. Se utiliza la contraseña de `README.txt` para descomprimirlo, obteniendo un **diccionario de contraseñas**:
+
+![Dictionary](https://res.cloudinary.com/dewqswzke/image/upload/v1761369333/Dictionary_jallao.png)
+
+### 2.3 Acceso SSH
+
+Con el diccionario, se utiliza **Hydra** para probar contraseñas contra el servicio SSH:
+
+```bash
+hydra -l usuario -P dictionary.txt ssh://172.17.0.2
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1761369333/Hydra_ynksu8.png)
+
+Se obtienen las credenciales correctas y se accede al sistema vía SSH:
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1761369336/Ssh_qsr1op.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De usuario → root
+
+Se listan las tareas programadas del sistema:
+
+```bash
+ls -la /etc/cron.d/
+```
+
+Se encuentra un cron job ejecutado por `root` que invoca un script editable por usuarios comunes:
+
+![Cleanup.sh](https://res.cloudinary.com/dewqswzke/image/upload/v1761369338/CleanupSh_ydofyh.png)
+
+Se edita el script para inyectar una línea maliciosa:
+
+```bash
+echo "chmod u+s /bin/bash" >> /var/backups/backup.sh
+```
+
+Se espera a que el cron ejecute el script y se elevan privilegios:
+
+```bash
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1761369335/Root_s1uul3.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de información sensible en directorios públicos",
+      severity: "Media",
+      impact: "Revelación de credenciales y pistas para ataques"
+    },
+    {
+      vulnerability: "Contraseña débil almacenada en texto plano",
+      severity: "Alta",
+      impact: "Acceso a archivos protegidos y servicios del sistema"
+    },
+    {
+      vulnerability: "ZIP protegido con contraseña débil",
+      severity: "Media",
+      impact: "Extracción de diccionario de contraseñas"
+    },
+    {
+      vulnerability: "Credenciales reutilizadas entre servicios",
+      severity: "Alta",
+      impact: "Acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Script cron ejecutado por root y escribible por usuarios comunes",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

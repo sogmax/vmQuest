@@ -1,0 +1,99 @@
+---
+interface Props {
+  title?: string;
+  data: Array<{
+    vulnerability: string;
+    severity: 'Crítica' | 'Alta' | 'Media' | 'Baja';
+    impact: string;
+  }>;
+}
+
+const { title, data } = Astro.props;
+---
+
+{title && (
+  <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--sl-color-white);">
+    {title}
+  </h3>
+)}
+
+<div style="margin: 1rem 0; overflow-x: auto;">
+  <div style="display: inline-block; border-radius: 0.5rem; border: 1px solid var(--sl-color-gray-5); overflow: hidden;">
+    <table style="border-collapse: collapse; background-color: var(--sl-color-gray-6);">
+      <thead>
+        <tr style="background-color: var(--sl-color-gray-7);">
+          <th style="padding: 0.75rem 1rem; text-align: left; font-weight: 600; color: var(--sl-color-white); white-space: nowrap;">
+            Vulnerabilidad
+          </th>
+          <th style="padding: 0.75rem 1rem; text-align: left; font-weight: 600; color: var(--sl-color-white); white-space: nowrap;">
+            Severidad
+          </th>
+          <th style="padding: 0.75rem 1rem; text-align: left; font-weight: 600; color: var(--sl-color-white); white-space: nowrap;">
+            Impacto
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.map((item: { severity: unknown; vulnerability: unknown; impact: unknown; }, index: number) => {
+          let severityColor = '';
+          let severityBg = '';
+          
+          if (item.severity === 'Crítica') {
+            severityColor = '#f38ba8';
+            severityBg = 'rgba(243, 139, 168, 0.1)';
+          } else if (item.severity === 'Alta') {
+            severityColor = '#fab387';
+            severityBg = 'rgba(250, 179, 135, 0.1)';
+          } else if (item.severity === 'Media') {
+            severityColor = '#f9e2af';
+            severityBg = 'rgba(249, 226, 175, 0.1)';
+          } else {
+            severityColor = '#89b4fa';
+            severityBg = 'rgba(137, 180, 250, 0.1)';
+          }
+          
+          const borderTopStyle = index === 0 ? 'none' : `1px solid var(--sl-color-gray-5)`;
+          
+          return (
+            <tr 
+              style={{
+                borderTop: borderTopStyle,
+                transition: 'background-color 0.2s ease',
+              }}
+            >
+              <td style="padding: 0.75rem 1rem; color: var(--sl-color-white); white-space: nowrap;">
+                {item.vulnerability}
+              </td>
+              <td style="padding: 0.75rem 1rem; white-space: nowrap;">
+                <span style={{
+                  display: 'inline-block',
+                  padding: '0.25rem 0.75rem',
+                  borderRadius: '9999px',
+                  fontSize: '0.75rem',
+                  fontWeight: '500',
+                  color: severityColor,
+                  backgroundColor: severityBg,
+                }}>
+                  {item.severity}
+                </span>
+              </td>
+              <td style="padding: 0.75rem 1rem; color: var(--sl-color-gray-2); white-space: nowrap;">
+                {item.impact}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+  tr {
+    transition: background-color 0.2s ease;
+  }
+  
+  tr:hover {
+    background-color: var(--sl-color-gray-7);
+  }
+</style>

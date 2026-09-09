@@ -1,0 +1,203 @@
+---
+title: Extraviado
+description: Resolución completa de la máquina virtual *Extraviado* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Extraviado**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que contiene credenciales codificadas en Base64 en la página principal. Estas credenciales permiten el acceso SSH al sistema como el usuario `extraviado`.
+Una vez dentro, se exploran archivos ocultos y se encuentra otra credencial codificada en Base64 que otorga acceso al usuario `diego`. Tras enumerar directorios, se localiza un archivo con un acertijo que, al ser resuelto, revela la contraseña de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Extraviado',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '27/12/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Extraviado.zip
+sudo bash auto_deploy.sh Extraviado.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Extraviado/{content,exploits,nmap,scripts}
+cd Extraviado
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1760421691/Ports_rjlanj.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1760421701/Gobuster_jor2q3.png)
+
+**Ruta encontrada:**
+- `/index.php` — Página por defecto de Apache.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1760421702/Index.html_jpuhpd.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Extracción de credenciales
+
+En el `index.php` se encuentra una cadena codificada en Base64 que parece contener credenciales `usuario:contraseña`.
+
+![Credenciales Base64](https://res.cloudinary.com/dewqswzke/image/upload/v1760421697/Credentials_yttdc4.png)
+
+Se decodifica la cadena y se obtienen las credenciales del usuario `extraviado`.
+
+### 2.2 Acceso SSH
+
+Con las credenciales obtenidas, se accede al sistema vía SSH:
+
+```bash
+ssh extraviado@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1760421693/Ssh_k3itfs.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De extraviado → diego
+
+Se listan archivos ocultos en el directorio home:
+
+```bash
+ls -la
+```
+
+![Directory listing](https://res.cloudinary.com/dewqswzke/image/upload/v1760421705/Ls-a_j1b0g3.png)
+
+En el directorio oculto `.secreto` se encuentra la contraseña de `diego`, también codificada en Base64.
+
+![Password diego](https://res.cloudinary.com/dewqswzke/image/upload/v1760421705/PassDiego_rdi50d.png)
+
+Se decodifica la cadena y se cambia al usuario `diego`:
+
+```bash
+su diego
+```
+
+![Diego directory](https://res.cloudinary.com/dewqswzke/image/upload/v1760421700/DiegoDir_wfdy1h.png)
+
+### 3.2 De diego → root
+
+Se listan archivos en el directorio home de `diego`. En el directorio `.local` se encuentra un archivo con un nombre fuera de lo común (`.-`):
+
+![Sudo pass](https://res.cloudinary.com/dewqswzke/image/upload/v1760421695/SudoPass_crodqa.png)
+
+Al leer el archivo, se muestra un acertijo:
+
+![Acertijo](https://res.cloudinary.com/dewqswzke/image/upload/v1760421690/Refran_da0jt4.png)
+
+Se resuelve el acertijo y se obtiene la contraseña de `root`:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1760421691/Root_vx43m7.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Credenciales codificadas en Base64 expuestas en código fuente",
+      severity: "Alta",
+      impact: "Compromiso de acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Contraseñas almacenadas en texto plano en archivos del sistema",
+      severity: "Crítica",
+      impact: "Acceso a múltiples cuentas de usuario"
+    },
+    {
+      vulnerability: "Falta de protección de archivos ocultos sensibles",
+      severity: "Media",
+      impact: "Exposición de credenciales y pistas de escalada"
+    },
+    {
+      vulnerability: "Contraseña de root almacenada en forma de acertijo en archivo accesible",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de cifrado en información sensible",
+      severity: "Alta",
+      impact: "Exposición de credenciales en texto plano"
+    }
+  ]}
+/>

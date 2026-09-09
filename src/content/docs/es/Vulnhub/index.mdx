@@ -1,0 +1,49 @@
+---
+title: Máquinas de VulnHub
+description: Esta es la sección de DockerLabs en mi página.
+---
+
+import data from '@/data/vulnhub.json';
+import { Picture } from 'astro:assets';
+
+<Picture
+  src="https://res.cloudinary.com/dewqswzke/image/upload/v1747004644/vulnhub_fb8def.png"
+  formats={['avif', 'webp']}
+  alt="Logo de VulnHub"
+  width={800}
+  height={400}
+/>
+
+## ¿Qué es VulnHub?
+
+**VulnHub** es una plataforma que proporciona entornos controlados para practicar hacking ético, análisis de vulnerabilidades y administración de sistemas. Permite adquirir experiencia práctica en ciberseguridad mediante máquinas virtuales diseñadas para simular situaciones reales.
+
+Cada máquina propone un recorrido técnico que suele incluir:
+- Fase de **reconocimiento** para descubrir vectores de entrada.
+- **Explotación** de vulnerabilidades para acceder al sistema.
+- **Escalada de privilegios** para obtener control total.
+
+El objetivo final es obtener usuario adminitrador.
+
+Las máquinas están clasificadas por nivel de dificultad: *Very Easy*, *Easy*, *Medium*, *Hard* y *Very Hard*.
+
+## Máquinas Resueltas
+
+<table>
+  <thead>
+    <tr>
+      <th>Nombre de la Máquina</th>
+      <th>Fecha de Finalización</th>
+      <th>Nivel de Dificultad</th>
+    </tr>
+  </thead>
+  <tbody>
+    {data.map((machine, index) => (
+      <tr key={index}>
+        <td>{machine.name}</td>
+        <td>{machine.completionDate}</td>
+        <td>{machine.difficulty}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>

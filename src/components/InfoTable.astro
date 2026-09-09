@@ -1,0 +1,41 @@
+---
+interface Props {
+  title?: string;
+  data: Record<string, string>;
+}
+
+const { title, data } = Astro.props;
+---
+
+{title && (
+  <h3 class="text-lg font-semibold mb-4" style="color: var(--sl-color-text-accent)">
+    {title}
+  </h3>
+)}
+
+<div style="margin: 1.5rem 0;">
+  <table style="width: auto; min-width: auto; max-width: none; border-collapse: collapse; background-color: var(--sl-color-gray-6); border-radius: 0.5rem; overflow: hidden; display: table;">
+    <thead>
+      <tr style="background-color: var(--sl-color-gray-7);">
+        <th style="padding: 0.75rem 1rem; text-align: left; font-weight: 600; color: var(--sl-color-white);">
+          Atributo
+        </th>
+        <th style="padding: 0.75rem 1rem; text-align: left; font-weight: 600; color: var(--sl-color-white);">
+          Valor
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {Object.entries(data).map(([key, value]) => (
+        <tr style="border-top: 1px solid var(--sl-color-gray-5);">
+          <td style="padding: 0.5rem 1rem; color: var(--sl-color-white); background-color: var(--sl-color-gray-6);">
+            <strong style="color: var(--sl-color-text-accent);">{key}</strong>
+          </td>
+          <td style="padding: 0.5rem 1rem; color: var(--sl-color-white); background-color: var(--sl-color-gray-6);">
+            {value}
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>

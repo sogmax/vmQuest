@@ -1,0 +1,257 @@
+---
+title: Como Empezar
+description: Cómo navegar y aprovechar el contenido de este sitio.
+---
+
+import React from 'react'
+
+import CompletedStats from "@/components/CompletedStats.jsx"
+
+export const PlatformCard = ({ href, img, title, colors = {} }) => {
+  const { bgStart = '#0f172a', bgEnd = '#1f2937', accentStart = '#60a5fa', accentEnd = '#3b82f6' } = colors
+  return (
+    <a className="platform-card" href={href} aria-label={`Ir a ${title}`}>
+      <div className="platform-logo">
+        <img src={img} alt={`${title} logo`} />
+      </div>
+      <div className="platform-title">{title}</div>
+      <style jsx>{`
+        .platform-card{
+          --bg-start: ${bgStart};
+          --bg-end: ${bgEnd};
+          --accent-start: ${accentStart};
+          --accent-end: ${accentEnd};
+
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+          justify-content:center;
+          padding:1.5rem;
+          border-radius:14px;
+          text-decoration:none;
+          color:var(--text, #fff);
+          background: linear-gradient(145deg, var(--bg-start), var(--bg-end));
+          transition: transform .28s ease, box-shadow .28s ease, filter .28s ease;
+          box-shadow: 0 6px 18px rgba(2,6,23,0.45);
+          overflow:hidden;
+        }
+        .platform-card:focus{outline:3px solid rgba(255,255,255,0.08); outline-offset:4px}
+        .platform-card:hover{transform:translateY(-6px); box-shadow:0 18px 40px rgba(2,6,23,0.6); filter:brightness(1.03)}
+        .platform-logo{ width:84px; height:84px; margin-bottom:0.9rem; border-radius:10px; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.02)}
+        .platform-logo img{ width:74px; height:74px; object-fit:contain }
+        .platform-title{
+          font-weight:800; font-size:1.15rem; text-align:center;
+          background:linear-gradient(90deg,var(--accent-start),var(--accent-end));
+          -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+        }
+      `}</style>
+    </a>
+  )
+}
+
+export const PlatformButton = ({ href, label, emoji = '👤', colors = {} }) => {
+  const { bgStart = '#7c3aed', bgEnd = '#6d28d9' } = colors
+  return (
+    <a className="platform-btn" href={href} target="_blank" rel="noopener noreferrer" aria-label={label}>
+      <span className="emoji">{emoji}</span>
+      <span>{label}</span>
+      <style jsx>{`
+        .platform-btn{
+          --b1:${bgStart}; --b2:${bgEnd};
+          display:inline-flex; align-items:center; gap:0.6rem; padding:0.7rem 1.2rem; border-radius:10px; text-decoration:none; font-weight:600;
+          background:linear-gradient(145deg,var(--b1),var(--b2)); color:white; transition:transform .22s ease, box-shadow .22s ease; box-shadow:0 6px 14px rgba(2,6,23,0.45);
+          border:1px solid rgba(255,255,255,0.06);
+        }
+        .platform-btn:hover{ transform:translateY(-3px); box-shadow:0 12px 30px rgba(2,6,23,0.6) }
+        .platform-btn:focus{ outline:3px solid rgba(255,255,255,0.06); outline-offset:3px }
+        .platform-btn .emoji{ font-size:1.15rem }
+      `}</style>
+    </a>
+  )
+}
+
+Bienvenido a mi página personal. Aquí encontrarás recursos, notas y experiencias relacionadas con la **ciberseguridad**, organizadas de forma clara y accesible.
+
+Este sitio está pensado como una bitácora personal, pero también como una guía para cualquier persona interesada en aprender y explorar este mundo.
+
+## 🧭 ¿Qué puedes encontrar aquí?
+
+- 📖 **Blog**: Publicaciones donde comparto ideas, aprendizajes y reflexiones sobre distintos temas relacionados con seguridad informática.
+- 🧪 **CTFs**: Retos que he resuelto con explicaciones paso a paso, ideales si estás aprendiendo.
+- 📝 **Notas**: Fragmentos rápidos y prácticos sobre herramientas, conceptos, comandos útiles y cheatsheets.
+- 📄 **Informes Profesionales**: Algunos retos y análisis más avanzados están documentados en **formatos LaTeX**, simulando reportes reales de pentesting profesional.
+
+## 📂 Estructura del sitio
+
+Todo el contenido está organizado en secciones accesibles desde el menú superior. También puedes usar la barra de búsqueda para encontrar temas específicos de forma rápida.
+
+## 🚩 Plataformas de CTF
+
+Explora mis análisis y resoluciones de máquinas en estas plataformas:
+
+<div className="ctf-grid">
+  <a className="ctf-card htb" href="/es/hackthebox">
+    <img src="https://res.cloudinary.com/dewqswzke/image/upload/v1747004646/Htb_mcsmml.png" alt="Hack The Box" />
+    <span>Hack The Box</span>
+  </a>
+
+  <a className="ctf-card dockerlabs" href="/es/dockerlabs">
+    <img src="https://res.cloudinary.com/dewqswzke/image/upload/v1747004672/dockerLabs_uscijr.webp" alt="DockerLabs" />
+    <span>DockerLabs</span>
+  </a>
+
+  <a className="ctf-card vulnhub" href="/es/vulnhub">
+    <img src="https://res.cloudinary.com/dewqswzke/image/upload/v1747004644/vulnhub_fb8def.png" alt="VulnHub" />
+    <span>VulnHub</span>
+  </a>
+
+  <a className="ctf-card hackmyvm" href="/es/hackmyvm">
+    <img src="https://res.cloudinary.com/dewqswzke/image/upload/v1747004645/hackMyVm_e2lzfz.png" alt="HackMyVM" />
+    <span>HackMyVM</span>
+  </a>
+</div>
+
+<style jsx>{`
+  .ctf-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+    gap:1.5rem;
+    margin:2rem 0 2.5rem;
+  }
+
+  .ctf-card{
+    display:flex;
+    align-items:center;
+    gap:1rem;
+    padding:1.1rem 1.3rem;
+    border-radius:12px;
+    text-decoration:none;
+    font-weight:700;
+    background:#0b1220;
+    border:1px solid rgba(255,255,255,0.06);
+    transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  }
+
+  .ctf-card img{
+    width:40px;
+    height:40px;
+    object-fit:contain;
+  }
+
+  .ctf-card span{
+    font-size:1.05rem;
+  }
+
+  .ctf-card:hover{
+    transform:translateY(-4px);
+    box-shadow:0 10px 30px rgba(0,0,0,0.4);
+  }
+
+  /* Colores por plataforma */
+  .ctf-card.htb{
+    border-color:rgba(132,204,22,0.35);
+  }
+  .ctf-card.htb span{ color:#a3e635 }
+  .ctf-card.htb:hover{ box-shadow:0 10px 35px rgba(132,204,22,0.25) }
+
+  .ctf-card.dockerlabs{
+    border-color:rgba(59,130,246,0.35);
+  }
+  .ctf-card.dockerlabs span{ color:#60a5fa }
+  .ctf-card.dockerlabs:hover{ box-shadow:0 10px 35px rgba(59,130,246,0.25) }
+
+  .ctf-card.vulnhub{
+    border-color:rgba(148,163,184,0.35);
+  }
+  .ctf-card.vulnhub span{ color:#cbd5f5 }
+
+  .ctf-card.hackmyvm{
+    border-color:rgba(168,85,247,0.35);
+  }
+  .ctf-card.hackmyvm span{ color:#c4b5fd }
+  .ctf-card.hackmyvm:hover{ box-shadow:0 10px 35px rgba(168,85,247,0.25) }
+`}</style>
+
+
+
+## 🌐 Mis Perfiles en plataformas oficiales
+
+Visita mis perfiles oficiales en estas plataformas:
+
+<div className="profiles">
+  <a className="profile-btn hackmyvm" href="https://hackmyvm.eu/profile/?user=sogmax" target="_blank" rel="noopener noreferrer">
+    HackMyVM
+  </a>
+
+  <a className="profile-btn htb" href="https://app.hackthebox.com/" target="_blank" rel="noopener noreferrer">
+    Hack The Box
+  </a>
+</div>
+
+<style jsx>{`
+  .profiles{
+    display:flex;
+    flex-wrap:wrap;
+    gap:0.8rem;
+    justify-content:center;
+    margin:1.8rem 0 2.5rem;
+  }
+
+  .profile-btn{
+    padding:0.55rem 1.1rem;
+    border-radius:999px;
+    font-weight:600;
+    text-decoration:none;
+    background:#0b1220;
+    border:1px solid rgba(255,255,255,0.08);
+    transition:background .2s ease, border-color .2s ease, transform .2s ease;
+  }
+
+  .profile-btn:hover{
+    transform:translateY(-2px);
+  }
+
+  .profile-btn.htb{
+    color:#a3e635;
+    border-color:rgba(132,204,22,0.4);
+  }
+  .profile-btn.htb:hover{
+    background:rgba(132,204,22,0.08);
+  }
+
+  .profile-btn.hackmyvm{
+    color:#c4b5fd;
+    border-color:rgba(168,85,247,0.4);
+  }
+  .profile-btn.hackmyvm:hover{
+    background:rgba(168,85,247,0.08);
+  }
+`}</style>
+
+
+## ✅ Máquinas completadas
+
+<CompletedStats client:load />
+
+## 👥 Contacto profesional
+
+Conéctate conmigo en LinkedIn para colaboraciones, preguntas o networking:
+
+<div className="centered">
+  <PlatformButton
+    href="https://linkedin.com/in/ernesto-de-la-rosa-zamora"
+    label="Conectar en LinkedIn"
+    emoji="💼"
+    colors={{ bgStart: '#0077B5', bgEnd: '#005582' }}
+  />
+</div>
+
+<style jsx>{`.centered{ display:flex; justify-content:center; margin:3rem 0 }`}</style>
+
+## 📬 Retroalimentación
+
+Si encuentras errores, tienes sugerencias o simplemente quieres saludar, puedes contactarme por LinkedIn. Tu retroalimentación siempre es bienvenida 🤝.
+
+---
+
+¡Gracias por visitar! Explora libremente y guarda lo que te sirva. Espero que este espacio te resulte útil, claro y motivador 🚀

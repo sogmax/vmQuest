@@ -1,0 +1,612 @@
+[
+  {
+    "name": "Trust",
+    "completionDate": "01/09/2024",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "Injection",
+    "completionDate": "10/09/2024",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "Vacaciones",
+    "completionDate": "14/09/2024",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "Obsesion",
+    "completionDate": "15/09/2024",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "BorazuwarahCTF",
+    "completionDate": "17/09/2024",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "BreakMySSH",
+    "completionDate": "21/09/2024",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "FirstHacking",
+    "completionDate": "21/09/2024",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "Tproot",
+    "completionDate": "31/05/2025",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "HedgeHog",
+    "completionDate": "01/06/2025",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "psycho",
+    "completionDate": "10/06/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Pequeñas-Mentirosas",
+    "completionDate": "11/06/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "WhereIsMyWebShell",
+    "completionDate": "12/06/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "NodeClimb",
+    "completionDate": "16/06/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Library",
+    "completionDate": "17/06/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "ConsoleLog",
+    "completionDate": "24/06/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Candy",
+    "completionDate": "28/06/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Verdejo",
+    "completionDate": "02/07/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Upload",
+    "completionDate": "07/07/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Move",
+    "completionDate": "08/07/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "SecretJenkins",
+    "completionDate": "09/07/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Backend",
+    "completionDate": "11/08/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "VulnVault",
+    "completionDate": "12/08/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Allien",
+    "completionDate": "17/08/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Extraviado",
+    "completionDate": "13/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Internship",
+    "completionDate": "15/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "ApiBase",
+    "completionDate": "17/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "BaluFood",
+    "completionDate": "20/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Gallery",
+    "completionDate": "21/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "ByPassMe",
+    "completionDate": "22/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Ejotapete",
+    "completionDate": "24/10/2025",
+    "difficulty": "Muy fácil"
+  },
+  {
+    "name": "Grooti",
+    "completionDate": "24/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "WalkingCms",
+    "completionDate": "26/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Mirame",
+    "completionDate": "26/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Showtime",
+    "completionDate": "27/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Pinguinazo",
+    "completionDate": "28/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Balulero",
+    "completionDate": "29/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "ChocolateLovers",
+    "completionDate": "29/10/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Pn",
+    "completionDate": "1/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Escolares",
+    "completionDate": "2/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "AnonymousPingu",
+    "completionDate": "2/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "FindYourStyle",
+    "completionDate": "3/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "File",
+    "completionDate": "4/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Whoiam",
+    "completionDate": "5/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "JenkHack",
+    "completionDate": "5/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Amor",
+    "completionDate": "8/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "AguaDeMayo",
+    "completionDate": "8/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Los 40 ladrones",
+    "completionDate": "9/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Picadilly",
+    "completionDate": "9/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "PressEnter",
+    "completionDate": "9/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "WinterFell",
+    "completionDate": "10/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Pntopntobarra",
+    "completionDate": "11/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Paradise",
+    "completionDate": "11/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "StellarJwt",
+    "completionDate": "12/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Dockerlabs",
+    "completionDate": "12/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Elevator",
+    "completionDate": "14/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Patriaquerida",
+    "completionDate": "14/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "WalkingDead",
+    "completionDate": "14/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Pkgpoison",
+    "completionDate": "14/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "ForbiddenHack",
+    "completionDate": "16/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Influencerhate",
+    "completionDate": "17/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Winfake",
+    "completionDate": "17/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "PingCTF",
+    "completionDate": "17/11/2025",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Dance-Samba",
+    "completionDate": "17/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Veneno",
+    "completionDate": "23/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Apolos",
+    "completionDate": "24/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Report",
+    "completionDate": "25/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Swiss",
+    "completionDate": "26/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Inclusion",
+    "completionDate": "26/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "HackZones",
+    "completionDate": "26/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "PingPong",
+    "completionDate": "26/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Reverse",
+    "completionDate": "30/11/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "MyBB",
+    "completionDate": "1/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "404-not-found",
+    "completionDate": "2/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Stranger",
+    "completionDate": "3/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "UserSearch",
+    "completionDate": "4/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Hidden",
+    "completionDate": "5/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "0xc0ffee",
+    "completionDate": "5/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Stack",
+    "completionDate": "6/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "chmod-4755",
+    "completionDate": "15/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "DevTools",
+    "completionDate": "15/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Dark",
+    "completionDate": "16/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Forgotten_portal",
+    "completionDate": "16/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "HereBash",
+    "completionDate": "17/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "CineHack",
+    "completionDate": "18/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Gitea",
+    "completionDate": "18/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "LogisticCloud",
+    "completionDate": "19/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Status",
+    "completionDate": "19/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Rutas",
+    "completionDate": "23/12/2025",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Aidor",
+    "completionDate": "06/01/2026",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "ChatMe",
+    "completionDate": "06/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Bola",
+    "completionDate": "15/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Domain",
+    "completionDate": "18/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Eclipse",
+    "completionDate": "19/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Asucar",
+    "completionDate": "21/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Database",
+    "completionDate": "22/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Fileception",
+    "completionDate": "22/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Master",
+    "completionDate": "25/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Devil",
+    "completionDate": "26/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Sites",
+    "completionDate": "27/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "SpiderRoot",
+    "completionDate": "28/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Mapache2",
+    "completionDate": "28/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "TheDog",
+    "completionDate": "30/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Rubiks",
+    "completionDate": "30/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Wargame",
+    "completionDate": "31/01/2026",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Express",
+    "completionDate": "31/01/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Wallet",
+    "completionDate": "04/02/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Crystalteam",
+    "completionDate": "04/02/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Pyred",
+    "completionDate": "04/02/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Memessploit",
+    "completionDate": "15/02/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "BruteShock",
+    "completionDate": "17/02/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "profetas",
+    "completionDate": "09/03/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Autoescuela",
+    "completionDate": "15/04/2026",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Internal",
+    "completionDate": "15/04/2026",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Talent",
+    "completionDate": "16/04/2026",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Unrecover",
+    "completionDate": "16/04/2026",
+    "difficulty": "Fácil"
+  },
+  {
+    "name": "Flasky",
+    "completionDate": "20/04/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Darkweb",
+    "completionDate": "22/04/2026",
+    "difficulty": "Difícil"
+  },
+  {
+    "name": "Seeker",
+    "completionDate": "20/05/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Cracker",
+    "completionDate": "29/06/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Fooding",
+    "completionDate": "30/06/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Ofuskeit",
+    "completionDate": "04/07/2026",
+    "difficulty": "Medio"
+  },
+  {
+    "name": "Trailpack",
+    "completionDate": "09/07/2026",
+    "difficulty": "Medio"
+  }
+]

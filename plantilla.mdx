@@ -1,0 +1,182 @@
+Aquí tienes la plantilla manteniendo el formato original con importaciones y estructura completa:
+
+---
+
+```markdown
+---
+title: [Nombre de la máquina]
+description: [Descripción breve del proceso de resolución]
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+[Descripción general de la máquina, vulnerabilidades encontradas y resumen del proceso de resolución]
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: '[Nombre de la máquina]',
+    Autor: '[Autor]',
+    Dificultad: '[Nivel]',
+    Fecha: '[Fecha]',
+    Plataforma: '[Plataforma]',
+    'IP Objetivo': '[IP]'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+[Descripción del proceso de despliegue]
+
+```bash
+[comandos de despliegue]
+```
+
+[Descripción de la organización del entorno]
+
+```bash
+mkdir -p [nombre]/{content,exploits,nmap,scripts}
+cd [nombre]
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+[Descripción del escaneo]
+
+```bash
+[comandos de escaneo]
+```
+
+[Resultados obtenidos]
+
+* **[Puerto]/tcp** — [Servicio]
+* **[Puerto]/tcp** — [Servicio]
+
+---
+
+### 1.2 Enumeración de servicios
+
+[Descripción de la enumeración de servicios identificados]
+
+```bash
+[comandos de enumeración]
+```
+
+[Resultados y hallazgos encontrados]
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+[Descripción del primer vector de ataque]
+
+```bash
+[comandos de explotación]
+```
+
+[Resultados obtenidos]
+
+```bash
+[comandos de acceso]
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De [usuario_actual] → [usuario_siguiente]
+
+[Descripción del proceso de escalada]
+
+```bash
+[comandos de enumeración]
+```
+
+[Vulnerabilidad identificada]
+
+```bash
+[comandos de explotación]
+```
+
+[Resultado obtenido]
+
+---
+
+### 3.2 De [usuario_siguiente] → [usuario_final]
+
+[Descripción del siguiente paso de escalada]
+
+```bash
+[comandos de enumeración]
+```
+
+[Vulnerabilidad identificada]
+
+```bash
+[comandos de explotación]
+```
+
+[Resultado final]
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "[Vulnerabilidad 1]",
+      severity: "[Severidad]",
+      impact: "[Impacto]"
+    },
+    {
+      vulnerability: "[Vulnerabilidad 2]",
+      severity: "[Severidad]",
+      impact: "[Impacto]"
+    },
+    {
+      vulnerability: "[Vulnerabilidad 3]",
+      severity: "[Severidad]",
+      impact: "[Impacto]"
+    },
+    {
+      vulnerability: "[Vulnerabilidad 4]",
+      severity: "[Severidad]",
+      impact: "[Impacto]"
+    },
+    {
+      vulnerability: "[Vulnerabilidad 5]",
+      severity: "[Severidad]",
+      impact: "[Impacto]"
+    }
+  ]}
+/>
+
+---
+
+### Recomendaciones de Mitigación
+
+* [Recomendación 1]
+* [Recomendación 2]
+* [Recomendación 3]
+* [Recomendación 4]
+* [Recomendación 5]
+
+---
+```

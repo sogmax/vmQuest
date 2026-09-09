@@ -1,0 +1,64 @@
+---
+title: Introducción a Crackmes
+description: Explicación de la plataforma Crackmes para practicar ingeniería inversa y reversing.
+---
+
+import data from '@/data/crackmes.json';
+import { Picture } from 'astro:assets';
+
+<Picture
+    src="https://res.cloudinary.com/dewqswzke/image/upload/v1770240213/Crackmes_vhoo6r.png"
+    formats={['avif', 'webp']}
+    alt="Logo de Crackmes"
+    width={800}
+    height={400}
+/>
+
+## ¿Qué es Crackmes?
+
+**Crackmes** es una plataforma orientada a la práctica de **ingeniería inversa (reverse engineering)** mediante pequeños programas diseñados específicamente para ser analizados, comprendidos y modificados.
+
+A diferencia de los laboratorios de hacking tradicionales, Crackmes se centra en:
+- Análisis de **binarios**
+- Comprensión del **flujo del programa**
+- Identificación de **validaciones de licencias o contraseñas**
+- Bypass de protecciones básicas y avanzadas
+
+El objetivo principal suele ser descubrir la **clave correcta**, parchear el binario o alterar su comportamiento sin disponer del código fuente.
+
+---
+
+## ¿Qué se practica en Crackmes?
+
+Los retos de Crackmes permiten desarrollar habilidades clave como:
+
+- Análisis estático con herramientas como **Ghidra**, **IDA** o **Radare2**
+- Análisis dinámico mediante **debuggers**
+- Comprensión de **ensamblador**
+- Identificación de **algoritmos de validación**
+- Técnicas de **patching** y **keygen**
+
+Los desafíos suelen estar clasificados por nivel de dificultad, desde **Easy** hasta **Very Hard**, dependiendo de la complejidad del binario y las protecciones implementadas.
+
+---
+
+## Crackmes Resueltos
+
+<table>
+    <thead>
+    <tr>
+        <th>Nombre del Crackme</th>
+        <th>Fecha de Resolución</th>
+        <th>Dificultad</th>
+    </tr>
+    </thead>
+    <tbody>
+    {data.map((crackme, index) => (
+        <tr key={index}>
+            <td>{crackme.name}</td>
+            <td>{crackme.completionDate}</td>
+            <td>{crackme.difficulty}</td>
+        </tr>
+    ))}
+    </tbody>
+</table>

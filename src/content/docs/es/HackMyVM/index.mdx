@@ -1,0 +1,42 @@
+---
+title: Máquinas de HackMyVM
+description: Esta es la sección de HackMyVM en mi página.
+---
+
+import data from '@/data/hackmyvm.json';
+import { Picture } from 'astro:assets';
+
+<Picture
+  src="https://res.cloudinary.com/dewqswzke/image/upload/v1747004645/hackMyVm_e2lzfz.png"
+  formats={['avif', 'webp']}
+  alt="Logo de HackMyVM"
+  width={800}
+  height={400}
+/>
+
+## ¿Qué es HackMyVM?
+
+HackMyVM es una plataforma que ofrece un entorno de entrenamiento y aprendizaje sobre conceptos de seguridad informática totalmente gratuito1. Esencialmente, es un entorno controlado que nos permite practicar técnicas de hacking, las mismas que se emplean en el mundo real1.
+
+Cada máquina presenta diferentes etapas. En primer lugar, debemos llevar a cabo una fase inicial de reconocimiento, a través de la cual detectaremos posibles vías de intrusión al sistema2. Finalmente, realizamos una escalada de privilegios para obtener el máximo alcance2. Para asegurarnos de que hemos “pwned” las máquinas, la idea es descubrir las “flags”: user.txt para el usuario de bajos privilegios y root.txt para el usuario de altos privilegios2.
+
+## Máquinas Resueltas
+
+<table>
+  <thead>
+    <tr>
+      <th>Nombre de la Máquina</th>
+      <th>Fecha de Finalización</th>
+      <th>Nivel de Dificultad</th>
+    </tr>
+  </thead>
+  <tbody>
+    {data.map((machine, index) => (
+      <tr key={index}>
+        <td>{machine.name}</td>
+        <td>{machine.completionDate}</td>
+        <td>{machine.difficulty}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>

